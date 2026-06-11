@@ -31,6 +31,19 @@ pub async fn doctor(socket: &Path) -> anyhow::Result<()> {
         println!("[warn] systemd: unit not installed (run `rat install`)");
     }
 
+    if let Ok(mut c) = crate::client::Client::connect(socket).await {
+        if let Ok(m) = c
+            .call(rat_proto::methods::MODE_GET, serde_json::Value::Null)
+            .await
+            .and_then(|v| Ok(serde_json::from_value::<rat_proto::ModeState>(v)?))
+        {
+            match m.idle_ms {
+                Some(idle) => println!("[ok]   mode: {} (idle {}s)", m.mode, idle / 1000),
+                None => println!("[warn] mode: {} (no idle probe; using activity fallback)", m.mode),
+            }
+        }
+    }
+
     for (bin, arg) in [("git", "--version"), ("tmux", "-V")] {
         match std::process::Command::new(bin).arg(arg).output() {
             Ok(o) if o.status.success() => {

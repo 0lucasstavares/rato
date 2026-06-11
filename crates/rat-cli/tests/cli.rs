@@ -14,11 +14,18 @@ fn start_daemon(tmp: &Path) -> PathBuf {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
-            let store =
-                rat_store::store::Store::open(&db, Arc::new(rat_core::clock::SystemClock))
-                    .unwrap();
+            let clock: Arc<dyn rat_core::clock::Clock> = Arc::new(rat_core::clock::SystemClock);
+            let store = rat_store::store::Store::open(&db, clock.clone()).unwrap();
+            let ingest = Arc::new(rat_daemon::ingest::Ingest::new(
+                store.clone(),
+                clock,
+                rat_daemon::sessionizer::Sessionizer::new(rat_daemon::sessionizer::DEFAULT_GAP_MS),
+            ));
+            let mode = Arc::new(rat_daemon::mode::ModeManager::new(0));
             let ctx = Arc::new(rat_daemon::server::ServerCtx {
                 store,
+                ingest,
+                mode,
                 started: Instant::now(),
                 db_path: db,
             });
@@ -72,6 +79,53 @@ fn status_fails_cleanly_when_daemon_is_down() {
         .assert()
         .failure()
         .stderr(contains("connecting"));
+}
+
+#[test]
+fn emit_shell_flows_into_projects_sessions_and_observations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = start_daemon(tmp.path());
+    let sock = socket.to_str().unwrap();
+    let repo = tmp.path().join("webapp");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+    Command::cargo_bin("rat")
+        .unwrap()
+        .args([
+            "--socket", sock, "emit-shell",
+            "--cmd", "npm test -- --watch=false",
+            "--cwd", repo.to_str().unwrap(),
+            "--exit", "1",
+            "--duration-ms", "4200",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("rat").unwrap().args(["--socket", sock, "projects"]).assert().success()
+        .stdout(contains("webapp"));
+
+    Command::cargo_bin("rat").unwrap().args(["--socket", sock, "sessions"]).assert().success()
+        .stdout(contains("open").and(contains("1 cmds")));
+
+    Command::cargo_bin("rat").unwrap()
+        .args(["--socket", sock, "observations", "--kind", "shell_cmd"])
+        .assert()
+        .success()
+        .stdout(contains("npm test"));
+
+    Command::cargo_bin("rat").unwrap().args(["--socket", sock, "mode"]).assert().success()
+        .stdout(contains("active"));
+}
+
+#[test]
+fn shell_init_prints_hooks_with_binary_path() {
+    for shell in ["bash", "zsh"] {
+        let out = Command::cargo_bin("rat").unwrap().args(["shell-init", shell]).assert().success();
+        let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+        assert!(stdout.contains("emit-shell"), "{shell} hook must call emit-shell");
+        assert!(stdout.contains("rat"), "{shell} hook must embed the binary path");
+        assert!(stdout.contains("--cwd"), "{shell} hook must pass cwd");
+    }
 }
 
 #[test]
