@@ -135,25 +135,51 @@ enum Shell {
     Zsh,
 }
 
-/// Reads key files from `keys_dir`. Returns a map of provider → key (trimmed).
+const KEY_FILE_MAX_BYTES: u64 = 4096;
+
+/// Reads key files from `keys_dir`. Returns `(keys, notes)` where `keys` maps
+/// provider → trimmed key and `notes` carries human-readable warnings (e.g. for
+/// oversized or unreadable files). Files larger than 4096 bytes are skipped and
+/// a note is appended instead of storing potentially garbage content.
+/// UTF-8 BOM (`\u{feff}`) is stripped before trimming.
+///
 /// Files: antr_k.txt → anthropic, open_k.txt → openai, openr_k.txt → openrouter.
-pub fn read_key_files(keys_dir: &std::path::Path) -> std::collections::HashMap<String, String> {
+pub fn read_key_files(
+    keys_dir: &std::path::Path,
+) -> (std::collections::HashMap<String, String>, Vec<String>) {
     let mapping = [
         ("antr_k.txt", "anthropic"),
         ("open_k.txt", "openai"),
         ("openr_k.txt", "openrouter"),
     ];
     let mut result = std::collections::HashMap::new();
+    let mut notes = Vec::new();
     for (file, provider) in &mapping {
         let path = keys_dir.join(file);
+        // Check file size before reading to avoid storing oversized garbage.
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() > KEY_FILE_MAX_BYTES => {
+                let msg = format!(
+                    "skipped {} ({} bytes > {} byte limit)",
+                    path.display(),
+                    meta.len(),
+                    KEY_FILE_MAX_BYTES
+                );
+                notes.push(msg);
+                continue;
+            }
+            Err(_) => continue, // file does not exist or is unreadable — skip silently
+            Ok(_) => {}
+        }
         if let Ok(contents) = std::fs::read_to_string(&path) {
-            let trimmed = contents.trim().to_string();
+            // Strip UTF-8 BOM then trim surrounding whitespace.
+            let trimmed = contents.trim_start_matches('\u{feff}').trim().to_string();
             if !trimmed.is_empty() {
                 result.insert(provider.to_string(), trimmed);
             }
         }
     }
-    result
+    (result, notes)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -257,7 +283,10 @@ async fn main() -> anyhow::Result<()> {
                     .join("rato")
                     .join("keys")
             });
-            let keys = read_key_files(&keys_dir);
+            let (keys, notes) = read_key_files(&keys_dir);
+            for note in &notes {
+                println!("note: {}", note);
+            }
             if keys.is_empty() {
                 println!("(no key files found in {})", keys_dir.display());
             }
@@ -353,23 +382,53 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("open_k.txt"), "  sk-test  \n").unwrap();
         std::fs::write(tmp.path().join("antr_k.txt"), "ant-key").unwrap();
-        let keys = read_key_files(tmp.path());
+        let (keys, notes) = read_key_files(tmp.path());
         assert_eq!(keys.get("openai").map(|s| s.as_str()), Some("sk-test"));
         assert_eq!(keys.get("anthropic").map(|s| s.as_str()), Some("ant-key"));
         assert_eq!(keys.get("openrouter"), None);
+        assert!(notes.is_empty());
     }
 
     #[test]
     fn read_key_files_missing_dir_returns_empty() {
-        let keys = read_key_files(std::path::Path::new("/nonexistent/path/xyz"));
+        let (keys, notes) = read_key_files(std::path::Path::new("/nonexistent/path/xyz"));
         assert!(keys.is_empty());
+        assert!(notes.is_empty());
     }
 
     #[test]
     fn read_key_files_empty_file_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("open_k.txt"), "   \n   ").unwrap();
-        let keys = read_key_files(tmp.path());
+        let (keys, _notes) = read_key_files(tmp.path());
         assert_eq!(keys.get("openai"), None);
+    }
+
+    #[test]
+    fn read_key_files_strips_utf8_bom() {
+        let tmp = tempfile::tempdir().unwrap();
+        // UTF-8 BOM is 0xEF 0xBB 0xBF = '\u{feff}' in Unicode
+        let bom_key = "\u{feff}sk-bom-test\n";
+        std::fs::write(tmp.path().join("open_k.txt"), bom_key).unwrap();
+        let (keys, notes) = read_key_files(tmp.path());
+        assert_eq!(keys.get("openai").map(|s| s.as_str()), Some("sk-bom-test"),
+            "BOM should be stripped before the key is stored");
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn read_key_files_skips_oversized_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Write a file larger than KEY_FILE_MAX_BYTES (4096)
+        let oversized: Vec<u8> = b"x".repeat(4097);
+        std::fs::write(tmp.path().join("open_k.txt"), &oversized).unwrap();
+        // Also write a valid anthropic key to confirm the other file still loads
+        std::fs::write(tmp.path().join("antr_k.txt"), "ant-key").unwrap();
+        let (keys, notes) = read_key_files(tmp.path());
+        assert_eq!(keys.get("openai"), None, "oversized file must not be stored");
+        assert_eq!(keys.get("anthropic").map(|s| s.as_str()), Some("ant-key"),
+            "non-oversized file must still load");
+        assert_eq!(notes.len(), 1, "one warning note expected for the oversized file");
+        assert!(notes[0].contains("4097"), "note should mention the actual byte count");
     }
 }

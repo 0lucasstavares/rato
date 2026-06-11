@@ -148,8 +148,6 @@ async fn main() -> anyhow::Result<()> {
         EmbeddingClient::new("https://api.openai.com".to_string(), key.clone())
     });
 
-    let last_error: Arc<std::sync::Mutex<Option<String>>> =
-        Arc::new(std::sync::Mutex::new(None));
     let critic_enabled = config.critic.enabled && !args.no_critic && backend.is_some();
 
     let llm_status = Arc::new(LlmStatusState {
@@ -176,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         // Combined fast+slow tick loop
         {
             let critic = critic.clone();
-            let last_error = last_error.clone();
+            let llm_status_tick = llm_status.clone();
             let fast_s = config.critic.fast_tick_s;
             let slow_s = config.critic.slow_tick_s;
             tokio::spawn(async move {
@@ -193,10 +191,18 @@ async fn main() -> anyhow::Result<()> {
                         _ = fast_interval.tick() => {
                             let signals = critic.fast_tick().await;
                             if !signals.is_empty() {
-                                if let Some(pb) = critic.slow_tick(&signals).await {
-                                    tracing::info!("critic: pushback created {}", pb.id);
-                                    if let Ok(mut e) = last_error.lock() {
-                                        *e = None;
+                                // The periodic slow loop may re-run on the same evidence; the 24h dedupe in the store absorbs duplicate pushbacks.
+                                match critic.slow_tick(&signals).await {
+                                    Some(pb) => {
+                                        tracing::info!("critic: pushback created {}", pb.id);
+                                        if let Ok(mut e) = llm_status_tick.last_error.lock() {
+                                            *e = None;
+                                        }
+                                    }
+                                    None => {
+                                        if let Ok(mut e) = llm_status_tick.last_error.lock() {
+                                            *e = None;
+                                        }
                                     }
                                 }
                             }
@@ -204,8 +210,12 @@ async fn main() -> anyhow::Result<()> {
                         _ = slow_interval.tick() => {
                             let signals = critic.fast_tick().await;
                             if !signals.is_empty() {
+                                // The periodic slow loop may re-run on the same evidence; the 24h dedupe in the store absorbs duplicate pushbacks.
                                 if let Some(pb) = critic.slow_tick(&signals).await {
                                     tracing::info!("critic slow_tick: pushback {}", pb.id);
+                                }
+                                if let Ok(mut e) = llm_status_tick.last_error.lock() {
+                                    *e = None;
                                 }
                             }
                         }
@@ -219,6 +229,7 @@ async fn main() -> anyhow::Result<()> {
             let store_h = store.clone();
             let embedder_h = embedder.clone();
             let clock_h = clock.clone();
+            let llm_status_h = llm_status.clone();
             // Create a second backend for hourly (can't share the one moved into Critic)
             let hourly_backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
                 llm_key.as_ref().map(|key| {
@@ -246,6 +257,9 @@ async fn main() -> anyhow::Result<()> {
                     .await
                     {
                         tracing::warn!("hourly job error: {e}");
+                        if let Ok(mut last_error) = llm_status_h.last_error.lock() {
+                            *last_error = Some(e.to_string());
+                        }
                     }
                 }
             });
@@ -255,14 +269,31 @@ async fn main() -> anyhow::Result<()> {
         {
             let store_n = store.clone();
             let clock_n = clock.clone();
+            let llm_status_n = llm_status.clone();
+            // Create a backend for nightly day-summary generation (mirrors the hourly backend)
+            let nightly_backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
+                llm_key.as_ref().map(|key| {
+                    make_backend(
+                        &BackendConfig {
+                            provider: provider.clone(),
+                            base_url: None,
+                            critic_model: config.llm.critic_model.clone(),
+                            cheap_model: config.llm.cheap_model.clone(),
+                        },
+                        key.clone(),
+                    )
+                });
             tokio::spawn(async move {
                 let delay_secs = secs_until_0330();
                 tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 loop {
                     if let Err(e) =
-                        rat_memory::jobs::nightly(&store_n, None, &clock_n).await
+                        rat_memory::jobs::nightly(&store_n, nightly_backend.as_deref(), &clock_n).await
                     {
                         tracing::warn!("nightly job error: {e}");
+                        if let Ok(mut last_error) = llm_status_n.last_error.lock() {
+                            *last_error = Some(e.to_string());
+                        }
                     }
                     tokio::time::sleep(Duration::from_secs(86400)).await;
                 }
@@ -426,6 +457,12 @@ fn secs_until_0330() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now_secs =
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    secs_until_0330_from(now_secs)
+}
+
+/// Pure helper used by tests: compute seconds from `now_secs` (Unix epoch) until
+/// the next 03:30 UTC boundary.
+fn secs_until_0330_from(now_secs: u64) -> u64 {
     // 03:30 UTC = 3*3600 + 30*60 = 12600 seconds from midnight
     let target_secs_in_day: u64 = 3 * 3600 + 30 * 60;
     let secs_in_day = 86400u64;
@@ -434,5 +471,36 @@ fn secs_until_0330() -> u64 {
         target_secs_in_day - current_secs_in_day
     } else {
         secs_in_day - current_secs_in_day + target_secs_in_day
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::secs_until_0330_from;
+
+    // 03:30 UTC = 12600 seconds into the day.
+    // Use a fixed day: 2024-01-01 00:00:00 UTC = 1704067200
+    const DAY_START: u64 = 1704067200;
+    const TARGET: u64 = 12600; // seconds into day for 03:30
+
+    #[test]
+    fn just_before_0330() {
+        // 1 second before 03:30
+        let now = DAY_START + TARGET - 1;
+        assert_eq!(secs_until_0330_from(now), 1);
+    }
+
+    #[test]
+    fn exactly_0330() {
+        // exactly at 03:30 — next occurrence is 24h later
+        let now = DAY_START + TARGET;
+        assert_eq!(secs_until_0330_from(now), 86400);
+    }
+
+    #[test]
+    fn just_after_0330() {
+        // 1 second after 03:30 — next is nearly 24h away
+        let now = DAY_START + TARGET + 1;
+        assert_eq!(secs_until_0330_from(now), 86400 - 1);
     }
 }
