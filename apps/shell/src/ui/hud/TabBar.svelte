@@ -22,7 +22,7 @@
     display: flex;
     gap: 4px;
     padding: 8px 8px 0 8px;
-    border-bottom: 2px solid var(--hud-line);
+    border-bottom: 2px solid var(--hud-ink);
   }
   .tab {
     border-bottom: none;

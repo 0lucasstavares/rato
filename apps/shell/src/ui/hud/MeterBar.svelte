@@ -17,7 +17,7 @@
   <span class="label">{label}</span>
   <span class="segments">
     {#each Array(SEGMENTS) as _, i}
-      <span class="seg" style:background={i < filled ? color : "var(--hud-line-dark)"}></span>
+      <span class="seg" style:background={i < filled ? color : "color-mix(in srgb, var(--hud-ink) 20%, transparent)"}></span>
     {/each}
   </span>
   <span class="text">{text}</span>
@@ -36,12 +36,12 @@
     letter-spacing: 1px;
     text-transform: uppercase;
     width: 90px;
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
   }
   .segments {
     display: inline-flex;
     gap: 2px;
-    border: 1px solid var(--hud-line);
+    border: 1px solid var(--hud-ink);
     padding: 2px;
     background: var(--hud-bg);
   }
@@ -52,6 +52,6 @@
   }
   .text {
     font-size: 11px;
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
   }
 </style>

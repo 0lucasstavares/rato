@@ -1,126 +1,184 @@
-/* HUD-PS2 design system — ARCHITECTURE.md §13 */
-:root {
-  --hud-bg: #0b0e14;
-  --hud-panel: #141a24;
-  --hud-panel-raised: #1c2433;
-  --hud-line: #3a4860;
-  --hud-line-light: #4d5f7d;
-  --hud-line-dark: #232c3d;
-  --hud-text: #c8d4e0;
-  --hud-text-dim: #7d8da1;
-  --hud-accent: #7cff6b;
-  --hud-warn: #ffb02e;
-  --hud-danger: #ff5c5c;
-  --hud-info: #5cc8ff;
+/* HUD-THUG2 design system — spec: docs/superpowers/specs/2026-06-11-avatar-hud-redesign-design.md
+   Skate-zine collage: cream paper, ink, die-cut stickers, tape, spray orange.
+   No image assets: grunge is an inline SVG feTurbulence data-URI. */
 
-  --hud-font-head: "Departure Mono", "Press Start 2P", "IBM Plex Mono", "JetBrains Mono", monospace;
-  --hud-font-body: "IBM Plex Mono", "JetBrains Mono", "Fira Mono", monospace;
+@font-face {
+  font-family: "Anton";
+  src: url("../../assets/fonts/anton.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Permanent Marker";
+  src: url("../../assets/fonts/permanent-marker.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow";
+  src: url("../../assets/fonts/barlow-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow";
+  src: url("../../assets/fonts/barlow-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+
+:root {
+  --hud-bg: #e9e1cb;
+  --hud-panel: #f7f1e2;
+  --hud-ink: #1e1a15;
+  --hud-ink-dim: #6b6256;
+  --hud-accent: #f26b1d;
+  --hud-ok: #3fa544;
+  --hud-warn: #f2b705;
+  --hud-danger: #d23b2e;
+  --hud-info: #2a6fc8;
+  --hud-tape: rgba(244, 238, 210, 0.75);
+
+  --hud-font-head: "Anton", "Arial Narrow", Impact, sans-serif;
+  --hud-font-marker: "Permanent Marker", "Comic Sans MS", cursive;
+  --hud-font-body: "Barlow", system-ui, sans-serif;
+  --hud-font-data: "IBM Plex Mono", "JetBrains Mono", monospace;
+
+  --hud-shadow: 4px 4px 0 var(--hud-ink);
+  --hud-shadow-sm: 2px 2px 0 var(--hud-ink);
 }
 
 .hud-body {
   background: var(--hud-bg);
-  color: var(--hud-text);
+  color: var(--hud-ink);
   font-family: var(--hud-font-body);
-  font-size: 13px;
+  font-size: 14px;
   margin: 0;
   min-height: 100vh;
 }
 
-/* chunky square panel with bevel */
-.hud-panel {
-  background: var(--hud-panel);
-  border: 2px solid var(--hud-line);
-  border-top-color: var(--hud-line-light);
-  border-left-color: var(--hud-line-light);
-  border-bottom-color: var(--hud-line-dark);
-  border-right-color: var(--hud-line-dark);
+/* paper grain — shared grunge overlay (feTurbulence noise) */
+.hud-grunge {
   position: relative;
 }
-
-/* 4-bit ordered-dither overlay, pure CSS */
-.hud-dither::after {
+.hud-grunge::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.06;
-  background-image: radial-gradient(var(--hud-text) 1px, transparent 1px);
-  background-size: 4px 4px;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-.hud-scanlines::before {
+/* paper card: hard shadow, ink border, slight alternating tilt */
+.hud-panel {
+  background: var(--hud-panel);
+  border: 2px solid var(--hud-ink);
+  box-shadow: var(--hud-shadow);
+  position: relative;
+  rotate: -0.5deg;
+}
+.hud-panel:nth-child(even) {
+  rotate: 0.6deg;
+}
+
+/* tape strips on two corners of a card */
+.hud-tape::before,
+.hud-tape::after {
   content: "";
   position: absolute;
-  inset: 0;
+  width: 56px;
+  height: 18px;
+  background: var(--hud-tape);
+  border: 1px solid rgba(30, 26, 21, 0.15);
   pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 2px,
-    rgba(0, 0, 0, 0.18) 3px
-  );
+}
+.hud-tape::before {
+  top: -9px;
+  left: 14px;
+  transform: rotate(-6deg);
+}
+.hud-tape::after {
+  bottom: -9px;
+  right: 14px;
+  transform: rotate(5deg);
 }
 
 .hud-title {
-  font-family: var(--hud-font-head);
-  font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  background: var(--hud-panel-raised);
-  border-bottom: 2px solid var(--hud-line);
-  padding: 4px 8px;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
+  font-family: var(--hud-font-marker);
+  font-size: 14px;
+  padding: 4px 10px 0;
+  color: var(--hud-ink);
 }
 
+/* die-cut sticker chip */
 .hud-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-family: var(--hud-font-head);
-  font-size: 9px;
-  letter-spacing: 1px;
-  padding: 2px 6px;
-  border: 1px solid var(--hud-line);
-  background: var(--hud-panel-raised);
-  text-transform: uppercase;
-}
-
-.hud-chip .dot {
-  width: 6px;
-  height: 6px;
-  display: inline-block;
-}
-
-.hud-chip.on .dot { background: var(--hud-accent); box-shadow: 0 0 4px var(--hud-accent); }
-.hud-chip.off .dot { background: var(--hud-line); }
-.hud-chip.warn .dot { background: var(--hud-warn); box-shadow: 0 0 4px var(--hud-warn); }
-.hud-chip.err .dot { background: var(--hud-danger); box-shadow: 0 0 4px var(--hud-danger); }
-
-button.hud-btn {
+  gap: 5px;
   font-family: var(--hud-font-head);
   font-size: 10px;
   letter-spacing: 1px;
+  padding: 2px 7px;
+  color: var(--hud-ink);
+  background: var(--hud-panel);
+  border: 3px solid #fff;
+  outline: 1px solid rgba(30, 26, 21, 0.35);
+  box-shadow: var(--hud-shadow-sm);
   text-transform: uppercase;
-  color: var(--hud-text);
-  background: var(--hud-panel-raised);
-  border: 2px solid var(--hud-line);
-  border-top-color: var(--hud-line-light);
-  border-left-color: var(--hud-line-light);
-  padding: 5px 10px;
+  rotate: -1deg;
+}
+.hud-chip:nth-child(even) {
+  rotate: 1.2deg;
+}
+
+.hud-chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--hud-ink);
+  display: inline-block;
+}
+.hud-chip.on .dot { background: var(--hud-ok); }
+.hud-chip.off .dot { background: var(--hud-ink-dim); }
+.hud-chip.warn .dot { background: var(--hud-warn); }
+.hud-chip.err .dot { background: var(--hud-danger); }
+
+/* sticker button */
+button.hud-btn {
+  font-family: var(--hud-font-head);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--hud-ink);
+  background: var(--hud-panel);
+  border: 2px solid var(--hud-ink);
+  box-shadow: var(--hud-shadow-sm);
+  padding: 5px 12px;
   cursor: pointer;
 }
-
+button.hud-btn:hover {
+  rotate: -1deg;
+  color: var(--hud-accent);
+}
 button.hud-btn:active {
-  border-top-color: var(--hud-line-dark);
-  border-left-color: var(--hud-line-dark);
-  border-bottom-color: var(--hud-line-light);
-  border-right-color: var(--hud-line-light);
-  transform: translateY(1px);
+  transform: translate(2px, 2px);
+  box-shadow: none;
 }
 
-button.hud-btn:hover { border-color: var(--hud-accent); color: var(--hud-accent); }
+/* rough orange marker underline (active tab, emphasis) */
+.hud-marker-stroke {
+  position: relative;
+}
+.hud-marker-stroke::after {
+  content: "";
+  position: absolute;
+  left: -3px;
+  right: -5px;
+  bottom: -4px;
+  height: 5px;
+  background: var(--hud-accent);
+  transform: rotate(-1.2deg) skewX(-12deg);
+}
 
-/* stepped motion, retro feel */
 @keyframes hud-blink-steps {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0.25; }

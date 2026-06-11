@@ -86,7 +86,7 @@
   {/if}
 
   {#if showQuick}
-    <div class="quick hud-panel hud-dither">
+    <div class="quick hud-panel">
       <button class="hud-btn" onclick={openDashboard}>Dashboard</button>
       <button class="hud-btn" onclick={() => (showQuick = false)}>Close</button>
       <div class="hint">{mode.mode}{mode.idle_ms !== null ? ` · idle ${Math.floor(mode.idle_ms / 1000)}s` : ""}</div>
@@ -108,7 +108,7 @@
     gap: 3px;
     padding: 4px 6px;
     background: color-mix(in srgb, var(--hud-bg) 85%, transparent);
-    border: 1px solid var(--hud-line);
+    border: 1px solid var(--hud-ink);
     cursor: grab;
     margin-top: 4px;
   }
@@ -136,11 +136,11 @@
     gap: 6px;
     align-items: center;
     padding: 8px;
-    color: var(--hud-text);
+    color: var(--hud-ink);
   }
   .quick .hint {
     font-size: 10px;
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     white-space: nowrap;
   }
 </style>

@@ -8,7 +8,7 @@
 </script>
 
 <div class="dash">
-  <header class="hud-panel hud-scanlines">
+  <header class="hud-panel hud-tape">
     <span class="logo">RATO</span>
     <span class="sub">developer companion · M2 shell</span>
   </header>
@@ -45,7 +45,7 @@
   }
   .sub {
     font-size: 11px;
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
   }
   main {
     flex: 1;

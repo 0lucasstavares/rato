@@ -74,7 +74,7 @@
   }
   .kv {
     font-size: 11px;
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     margin-top: 6px;
   }
   .kv.err {
@@ -93,14 +93,14 @@
     text-transform: uppercase;
   }
   .dim {
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     font-size: 11px;
   }
   .log-row {
     display: flex;
     gap: 10px;
     padding: 3px 0;
-    border-bottom: 1px solid var(--hud-line-dark);
+    border-bottom: 1px solid color-mix(in srgb, var(--hud-ink) 20%, transparent);
   }
   .log-row .t {
     width: 36px;

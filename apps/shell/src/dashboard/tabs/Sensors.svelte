@@ -101,12 +101,12 @@
     padding: 4px 0;
   }
   .dim {
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     font-size: 11px;
   }
   .policy {
     margin-top: 10px;
-    border-top: 1px solid var(--hud-line-dark);
+    border-top: 1px solid color-mix(in srgb, var(--hud-ink) 20%, transparent);
     padding-top: 6px;
   }
 </style>

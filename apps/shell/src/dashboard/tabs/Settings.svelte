@@ -55,13 +55,13 @@
     padding: 3px 16px 3px 0;
   }
   td:first-child {
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     font-family: var(--hud-font-head);
     font-size: 10px;
     text-transform: uppercase;
   }
   .dim {
-    color: var(--hud-text-dim);
+    color: var(--hud-ink-dim);
     font-size: 12px;
   }
   ul {

@@ -3,7 +3,7 @@
   let { title, children }: { title?: string; children: Snippet } = $props();
 </script>
 
-<div class="hud-panel hud-dither">
+<div class="hud-panel">
   {#if title}
     <div class="hud-title">{title}</div>
   {/if}
