@@ -56,7 +56,6 @@
 </script>
 
 <div class="avatar-root">
-  <!-- grip bar: drag handle -->
   <div
     class="grip"
     onmousedown={startDrag}
@@ -70,12 +69,11 @@
     <StatusChip label="NET" state={net === "on" ? "on" : "err"} />
   </div>
 
-  <!-- the rat -->
   <canvas
     bind:this={canvas}
     class="rat"
-    width="240"
-    height="240"
+    width="150"
+    height="180"
     onclick={onBodyClick}
     ondblclick={openDashboard}
     oncontextmenu={onContextMenu}
@@ -87,8 +85,8 @@
 
   {#if showQuick}
     <div class="quick hud-panel">
-      <button class="hud-btn" onclick={openDashboard}>Dashboard</button>
-      <button class="hud-btn" onclick={() => (showQuick = false)}>Close</button>
+      <button class="hud-btn" onclick={openDashboard}>Dash</button>
+      <button class="hud-btn" onclick={() => (showQuick = false)}>×</button>
       <div class="hint">{mode.mode}{mode.idle_ms !== null ? ` · idle ${Math.floor(mode.idle_ms / 1000)}s` : ""}</div>
     </div>
   {/if}
@@ -96,49 +94,65 @@
 
 <style>
   .avatar-root {
-    width: 320px;
-    height: 360px;
+    width: 180px;
+    height: 240px;
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
   }
+  /* tape band across the top: drag handle + sticker LEDs */
   .grip {
     display: flex;
-    gap: 3px;
-    padding: 4px 6px;
-    background: color-mix(in srgb, var(--hud-bg) 85%, transparent);
-    border: 1px solid var(--hud-ink);
+    gap: 2px;
+    justify-content: center;
+    padding: 3px 0;
+    width: 170px;
+    background: var(--hud-tape);
+    border: 1px solid rgba(30, 26, 21, 0.2);
+    transform: rotate(-1.2deg);
     cursor: grab;
-    margin-top: 4px;
+    z-index: 2;
+  }
+  .grip :global(.hud-chip) {
+    font-size: 7px;
+    padding: 1px 3px;
+    border-width: 2px;
+    box-shadow: none;
   }
   .rat {
-    width: 320px;
-    height: 320px;
+    width: 180px;
+    height: 216px;
+    margin-top: auto;
     image-rendering: pixelated;
     cursor: pointer;
   }
   .zzz {
     position: absolute;
-    top: 80px;
-    right: 60px;
-    font-family: var(--hud-font-head);
+    top: 50px;
+    right: 18px;
+    font-family: var(--hud-font-marker);
+    font-size: 15px;
     color: var(--hud-info);
+    text-shadow: 1px 1px 0 #fff;
     animation: hud-blink-steps 2s steps(2) infinite;
     pointer-events: none;
   }
   .quick {
     position: absolute;
-    bottom: 12px;
+    bottom: 10px;
     left: 50%;
-    transform: translateX(-50%);
+    rotate: none; /* neutralize .hud-panel's nth-child tilt — transform already rotates */
+    transform: translateX(-50%) rotate(-1deg);
     display: flex;
     gap: 6px;
     align-items: center;
-    padding: 8px;
+    padding: 7px;
     color: var(--hud-ink);
+    z-index: 3;
   }
   .quick .hint {
+    font-family: var(--hud-font-marker);
     font-size: 10px;
     color: var(--hud-ink-dim);
     white-space: nowrap;

@@ -7,8 +7,8 @@
   let active = $state("Now");
 </script>
 
-<div class="dash">
-  <header class="hud-panel hud-tape">
+<div class="dash hud-grunge">
+  <header>
     <span class="logo">RATO</span>
     <span class="sub">developer companion · M2 shell</span>
   </header>
@@ -22,6 +22,7 @@
       <Settings />
     {/if}
   </main>
+  <div class="watermark" aria-hidden="true">RATO</div>
 </div>
 
 <style>
@@ -29,27 +30,46 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    position: relative;
+    overflow: hidden;
   }
   header {
     display: flex;
     align-items: baseline;
-    gap: 12px;
-    padding: 10px 14px;
-    margin: 8px;
+    gap: 14px;
+    padding: 14px 16px 0;
   }
   .logo {
     font-family: var(--hud-font-head);
-    font-size: 22px;
-    letter-spacing: 4px;
-    color: var(--hud-accent);
+    font-size: 34px;
+    line-height: 1;
+    letter-spacing: 2px;
+    color: var(--hud-ink);
+    text-shadow: 3px 3px 0 var(--hud-accent);
+    rotate: -1.5deg;
   }
   .sub {
-    font-size: 11px;
+    font-family: var(--hud-font-marker);
+    font-size: 13px;
     color: var(--hud-ink-dim);
   }
   main {
     flex: 1;
     overflow: auto;
-    padding: 12px;
+    padding: 4px 16px 16px;
+    z-index: 1;
+  }
+  .watermark {
+    position: absolute;
+    bottom: -30px;
+    right: -20px;
+    font-family: var(--hud-font-head);
+    font-size: 160px;
+    line-height: 1;
+    color: var(--hud-ink);
+    opacity: 0.05;
+    rotate: -8deg;
+    pointer-events: none;
+    user-select: none;
   }
 </style>
