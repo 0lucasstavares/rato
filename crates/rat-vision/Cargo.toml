@@ -1,0 +1,10 @@
+[package]
+name = "rat-vision"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+rat-core = { path = "../rat-core" }
+thiserror = { workspace = true }
+regex = { workspace = true }
