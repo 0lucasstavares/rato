@@ -22,6 +22,11 @@ fn start_daemon(tmp: &Path) -> PathBuf {
                 rat_daemon::sessionizer::Sessionizer::new(rat_daemon::sessionizer::DEFAULT_GAP_MS),
             ));
             let mode = Arc::new(rat_daemon::mode::ModeManager::new(0));
+            let task_runner = rat_workbench::runner::TaskRunner::new(
+                store.clone(),
+                rat_workbench::tmux::Tmux::new(format!("rato-test-{}", std::process::id())),
+                clock.clone(),
+            );
             let ctx = Arc::new(rat_daemon::server::ServerCtx {
                 store,
                 ingest,
@@ -31,6 +36,7 @@ fn start_daemon(tmp: &Path) -> PathBuf {
                 clock,
                 embedder: None,
                 llm_status: rat_daemon::server::LlmStatusState::disabled(),
+                task_runner,
             });
             let listener = tokio::net::UnixListener::bind(&socket2).unwrap();
             rat_daemon::server::serve(listener, ctx).await;

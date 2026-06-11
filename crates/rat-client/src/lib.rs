@@ -112,6 +112,8 @@ mod tests {
     use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
     use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
     use rat_store::store::Store;
+    use rat_workbench::runner::TaskRunner;
+    use rat_workbench::tmux::Tmux;
 
     /// A daemon in its own runtime on its own thread — dropping the runtime
     /// (via the shutdown signal) kills connection handler tasks too, unlike
@@ -137,6 +139,7 @@ mod tests {
                         Sessionizer::new(DEFAULT_GAP_MS),
                     ));
                     let mode = Arc::new(ModeManager::new(0));
+                    let task_runner = TaskRunner::new(store.clone(), Tmux::new(format!("rato-test-{}", std::process::id())), clock.clone());
                     let ctx = Arc::new(ServerCtx {
                         store,
                         ingest,
@@ -146,6 +149,7 @@ mod tests {
                         clock,
                         embedder: None,
                         llm_status: LlmStatusState::disabled(),
+                        task_runner,
                     });
                     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
                     ready_tx.send(()).unwrap();

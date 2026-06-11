@@ -17,6 +17,8 @@ rat-sensors = { path = "../rat-sensors" }
 rat-store = { path = "../rat-store" }
 rat-brain = { path = "../rat-brain" }
 rat-memory = { path = "../rat-memory" }
+rat-workbench = { path = "../rat-workbench" }
+rat-policy = { path = "../rat-policy" }
 anyhow = { workspace = true }
 async-trait = "0.1"
 clap = { workspace = true }

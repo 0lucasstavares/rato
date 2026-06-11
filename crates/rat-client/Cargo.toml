@@ -13,4 +13,5 @@ tokio = { workspace = true }
 rat-core = { path = "../rat-core" }
 rat-daemon = { path = "../rat-daemon" }
 rat-store = { path = "../rat-store" }
+rat-workbench = { path = "../rat-workbench" }
 tempfile = { workspace = true }

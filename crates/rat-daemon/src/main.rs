@@ -19,6 +19,8 @@ use rat_daemon::ingest::Ingest;
 use rat_daemon::memory_searcher::DaemonMemorySearcher;
 use rat_daemon::mode::{self, ModeManager};
 use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
+use rat_workbench::runner::TaskRunner;
+use rat_workbench::tmux::Tmux;
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_memory::embed::EmbeddingClient;
 use rat_proto::NewEvent;
@@ -315,6 +317,27 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("ratd {} listening on {}", env!("CARGO_PKG_VERSION"), socket.display());
     tracing::info!("event store at {}", db.display());
 
+    let task_runner = TaskRunner::new(store.clone(), Tmux::new("rato"), clock.clone());
+
+    // Approval expiry sweep: expire pending approvals every 60s
+    {
+        let store_exp = store.clone();
+        let clock_exp = clock.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let now = clock_exp.now_ms();
+                match store_exp.expire_approvals(now).await {
+                    Ok(n) if n > 0 => tracing::info!("expired {n} approval(s)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("expire_approvals failed: {e}"),
+                }
+            }
+        });
+    }
+
     let ctx = Arc::new(ServerCtx {
         store,
         ingest,
@@ -324,6 +347,7 @@ async fn main() -> anyhow::Result<()> {
         clock,
         embedder,
         llm_status,
+        task_runner,
     });
 
     tokio::select! {

@@ -21,6 +21,7 @@ toml = "0.8"
 
 [dev-dependencies]
 rat-store = { path = "../rat-store" }
+rat-workbench = { path = "../rat-workbench" }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }

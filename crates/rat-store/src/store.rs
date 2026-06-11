@@ -113,6 +113,8 @@ enum Cmd {
     // v4 — blobs
     InsertBlob { bytes: Vec<u8>, created: i64, reply: Reply<Blob> },
     GetBlob { id: String, reply: Reply<Option<Blob>> },
+    // v4 — project lookup by id
+    GetProjectById { id: String, reply: Reply<Option<Project>> },
 }
 
 /// Cloneable handle to the single-writer SQLite actor thread.
@@ -631,6 +633,14 @@ impl Store {
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
+
+    pub async fn get_project_by_id(&self, id: String) -> Result<Option<Project>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetProjectById { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
 }
 
 fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) {
@@ -787,6 +797,10 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::GetBlob { id, reply } => {
                 let _ = reply.send(do_get_blob(&conn, &id));
             }
+            // v4 — project lookup by id
+            Cmd::GetProjectById { id, reply } => {
+                let _ = reply.send(do_get_project_by_id(&conn, &id));
+            }
         }
     }
 }
@@ -855,6 +869,27 @@ fn do_list_projects(conn: &Connection) -> Result<Vec<Project>, StoreError> {
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn do_get_project_by_id(conn: &Connection, id: &str) -> Result<Option<Project>, StoreError> {
+    let result = conn.query_row(
+        "SELECT id, root_path, name, first_seen, last_seen FROM projects WHERE id = ?1",
+        params![id],
+        |r| {
+            Ok(Project {
+                id: r.get(0)?,
+                root_path: r.get(1)?,
+                name: r.get(2)?,
+                first_seen: r.get(3)?,
+                last_seen: r.get(4)?,
+            })
+        },
+    );
+    match result {
+        Ok(p) => Ok(Some(p)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
 }
 
 fn do_add_observation(

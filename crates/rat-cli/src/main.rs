@@ -10,7 +10,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
 
 use rat_proto::{
-    methods, Event, HitDto, ModeState, NewEvent, Observation, Project, PushbackDto, WorkSession,
+    methods, AgentRunDto, ApprovalDto, Event, HitDto, ModeState, NewEvent, Observation, Project,
+    PushbackDto, WorkSession,
 };
 
 /// RATO control CLI.
@@ -108,6 +109,16 @@ enum Cmd {
     },
     /// Show LLM / critic configuration status
     LlmStatus,
+    /// Manage workbench agent runs
+    Task {
+        #[command(subcommand)]
+        cmd: TaskCmd,
+    },
+    /// Show pending approvals
+    Approvals {
+        #[command(subcommand)]
+        cmd: Option<ApprovalsCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +128,39 @@ enum PushbacksCmd {
         id: String,
         /// "useful" | "dismiss" | "snooze"
         verdict: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskCmd {
+    /// Start a new agent run
+    Start {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "fakeagent", value_parser = ["fakeagent", "claude-code", "codex"])]
+        adapter: String,
+    },
+    /// List recent agent runs
+    List,
+    /// Tail the tmux output of a run
+    Tail {
+        run_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApprovalsCmd {
+    /// Decide on a pending approval
+    Decide {
+        id: String,
+        /// "approve" | "deny"
+        verdict: String,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        slug: Option<String>,
     },
 }
 
@@ -368,6 +412,70 @@ async fn main() -> anyhow::Result<()> {
             if let Some(err) = s.last_error {
                 println!("last_error:        {}", err);
             }
+        }
+        Cmd::Task { cmd: TaskCmd::Start { project, title, adapter } } => {
+            // Resolve the project_id: look up project by root_path via list_projects
+            let mut c = client::Client::connect(&socket).await?;
+            let projects: Vec<Project> = serde_json::from_value(
+                c.call(methods::PROJECTS_LIST, Value::Null).await?,
+            )?;
+            let project_id = projects.iter()
+                .find(|p| p.root_path == project || p.name == project)
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| project.clone()); // fallback: treat as project_id directly
+            let run: AgentRunDto = serde_json::from_value(
+                c.call(methods::WORKBENCH_START, serde_json::json!({
+                    "project_id": project_id,
+                    "title": title,
+                    "adapter": adapter,
+                })).await?,
+            )?;
+            println!("{} {} {} {}", run.id, run.status, run.adapter, run.task_title);
+        }
+        Cmd::Task { cmd: TaskCmd::List } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let runs: Vec<AgentRunDto> = serde_json::from_value(
+                c.call(methods::WORKBENCH_RUNS, serde_json::json!({})).await?,
+            )?;
+            if runs.is_empty() {
+                println!("(no runs)");
+            }
+            for r in runs {
+                println!("{} [{:<8}] {:<12} {}", r.id, r.status, r.adapter, r.task_title);
+            }
+        }
+        Cmd::Task { cmd: TaskCmd::Tail { run_id } } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let result = c.call(methods::WORKBENCH_TAIL, serde_json::json!({
+                "run_id": run_id,
+            })).await?;
+            let lines = result["lines"].as_str().unwrap_or("");
+            print!("{}", lines);
+        }
+        Cmd::Approvals { cmd: None } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let approvals: Vec<ApprovalDto> = serde_json::from_value(
+                c.call(methods::APPROVALS_PENDING, Value::Null).await?,
+            )?;
+            if approvals.is_empty() {
+                println!("(no pending approvals)");
+            }
+            for a in approvals {
+                let slug: String = a.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
+                println!("{} [{:<8}] R{} [{}] {}", a.id, a.status, a.risk, slug, a.title);
+            }
+        }
+        Cmd::Approvals { cmd: Some(ApprovalsCmd::Decide { id, verdict, note, slug }) } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let approval: ApprovalDto = serde_json::from_value(
+                c.call(methods::APPROVALS_DECIDE, serde_json::json!({
+                    "id": id,
+                    "verdict": verdict,
+                    "note": note,
+                    "slug": slug,
+                })).await?,
+            )?;
+            println!("{} → {}", approval.id, approval.status);
         }
     }
     Ok(())

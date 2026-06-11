@@ -3,10 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rat_proto::{
-    errcodes, methods, HelloParams, HelloResult, HitDto, LlmKeyPresence, LlmStatusResult,
-    MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto, PushbackFeedbackParams,
-    PushbacksRecentParams, RecentParams, Request, Response, StatusResult, PROTO_VERSION,
+    AgentRunDto, ApprovalDto, ApprovalsDecideParams, WorkbenchRunsParams, WorkbenchStartParams,
+    WorkbenchTailParams, errcodes, methods, HelloParams, HelloResult, HitDto, LlmKeyPresence,
+    LlmStatusResult, MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto,
+    PushbackFeedbackParams, PushbacksRecentParams, RecentParams, Request, Response, StatusResult,
+    PROTO_VERSION,
 };
+use rat_policy::{requires_slug, risk_tier, ActionKind, RiskOutcome};
+use rat_workbench::runner::TaskRunner;
+use rat_workbench::{ClaudeCode, Codex, FakeAgent};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -56,6 +61,7 @@ pub struct ServerCtx {
     pub clock: Arc<dyn Clock>,
     pub embedder: Option<EmbeddingClient>,
     pub llm_status: Arc<LlmStatusState>,
+    pub task_runner: TaskRunner,
 }
 
 /// Accept loop. Runs until the task is dropped.
@@ -352,6 +358,156 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             };
             Response::ok(req.id, serde_json::to_value(result).expect("serializes"))
         }
+        methods::WORKBENCH_START => {
+            let params: WorkbenchStartParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+            };
+            // Resolve project_id → root_path
+            let project = match ctx.store.get_project_by_id(params.project_id.clone()).await {
+                Ok(Some(p)) => p,
+                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("project {} not found", params.project_id)),
+                Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            };
+            let project_root = std::path::PathBuf::from(&project.root_path);
+            // Map adapter string to impl
+            let run = match params.adapter.as_str() {
+                "fakeagent" => {
+                    let adapter = FakeAgent::from_manifest();
+                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
+                }
+                "claude-code" => {
+                    let adapter = ClaudeCode;
+                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
+                }
+                "codex" => {
+                    let adapter = Codex;
+                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
+                }
+                other => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("unknown adapter: {other}; must be fakeagent|claude-code|codex")),
+            };
+            match run {
+                Ok(r) => Response::ok(req.id, serde_json::to_value(agent_run_to_dto(r)).expect("serializes")),
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::WORKBENCH_RUNS => {
+            let params: WorkbenchRunsParams = if req.params.is_null() {
+                WorkbenchRunsParams { n: None }
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                }
+            };
+            let n = params.n.unwrap_or(20);
+            match ctx.store.recent_agent_runs(n).await {
+                Ok(runs) => {
+                    let dtos: Vec<AgentRunDto> = runs.into_iter().map(agent_run_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::WORKBENCH_TAIL => {
+            let params: WorkbenchTailParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+            };
+            let run = match ctx.store.get_agent_run(params.run_id.clone()).await {
+                Ok(Some(r)) => r,
+                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("run {} not found", params.run_id)),
+                Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            };
+            let target = match run.tmux_target {
+                Some(t) => t,
+                None => return Response::err(req.id, errcodes::INVALID_REQUEST, "run has no tmux_target"),
+            };
+            let lines = params.lines.unwrap_or(50);
+            match ctx.task_runner.tmux.capture_tail(&target, lines) {
+                Ok(output) => Response::ok(req.id, serde_json::json!({ "lines": output })),
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::APPROVALS_PENDING => {
+            match ctx.store.pending_approvals().await {
+                Ok(approvals) => {
+                    let dtos: Vec<ApprovalDto> = approvals.into_iter().map(approval_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::APPROVALS_DECIDE => {
+            let params: ApprovalsDecideParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+            };
+            if params.verdict != "approve" && params.verdict != "deny" {
+                return Response::err(req.id, errcodes::INVALID_REQUEST, "verdict must be 'approve' or 'deny'");
+            }
+            // Fetch the approval to check its tier and slug
+            let approval = match ctx.store.get_approval(params.id.clone()).await {
+                Ok(Some(a)) => a,
+                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("approval {} not found", params.id)),
+                Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            };
+            // R3 gate: if risk tier requires slug, slug param MUST be provided and match
+            // The slug is the last 6 chars of the approval id
+            let tier = match risk_tier(ActionKind::MergeBack) {
+                RiskOutcome::Tier(t) => t,
+                RiskOutcome::Refused => unreachable!(),
+            };
+            // Check the actual risk stored on the approval
+            let approval_tier = match approval.risk {
+                0 => rat_policy::Tier::R0,
+                1 => rat_policy::Tier::R1,
+                2 => rat_policy::Tier::R2,
+                3 => rat_policy::Tier::R3,
+                _ => rat_policy::Tier::R2,
+            };
+            let _ = tier; // suppress unused
+            if requires_slug(approval_tier) {
+                let expected_slug: String = approval.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
+                match &params.slug {
+                    None => return Response::err(req.id, errcodes::INVALID_REQUEST, "R3 approval requires a slug confirmation"),
+                    Some(s) if s != &expected_slug => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("slug mismatch: expected '{expected_slug}'")),
+                    Some(_) => {}
+                }
+            }
+            let now = ctx.clock.now_ms();
+            if params.verdict == "approve" {
+                // Decide the approval as approved
+                let decided = match ctx.store.decide_approval(
+                    params.id.clone(),
+                    "approved".to_string(),
+                    now,
+                    "cli".to_string(),
+                    params.note.clone(),
+                ).await {
+                    Ok(a) => a,
+                    Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+                };
+                // If it's a merge_back approval, trigger execute_merge
+                if decided.kind == "merge_back" {
+                    match ctx.task_runner.execute_merge(&decided).await {
+                        Ok(_outcome) => {}
+                        Err(e) => return Response::err(req.id, errcodes::INTERNAL, format!("execute_merge failed: {e}")),
+                    }
+                }
+                // Re-fetch to return updated state
+                match ctx.store.get_approval(params.id).await {
+                    Ok(Some(a)) => Response::ok(req.id, serde_json::to_value(approval_to_dto(a)).expect("serializes")),
+                    _ => Response::ok(req.id, serde_json::to_value(approval_to_dto(decided)).expect("serializes")),
+                }
+            } else {
+                // deny
+                match ctx.task_runner.deny(&params.id, params.note.as_deref()).await {
+                    Ok(a) => Response::ok(req.id, serde_json::to_value(approval_to_dto(a)).expect("serializes")),
+                    Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+                }
+            }
+        }
         other => {
             Response::err(req.id, errcodes::METHOD_NOT_FOUND, format!("unknown method: {other}"))
         }
@@ -374,5 +530,47 @@ fn pushback_to_dto(pb: rat_store::rows::Pushback) -> PushbackDto {
         status: pb.status,
         decided_at: pb.decided_at,
         latency_ms: pb.latency_ms,
+    }
+}
+
+fn agent_run_to_dto(r: rat_store::rows::AgentRun) -> AgentRunDto {
+    AgentRunDto {
+        id: r.id,
+        adapter: r.adapter,
+        task_title: r.task_title,
+        project_id: r.project_id,
+        worktree_path: r.worktree_path,
+        branch: r.branch,
+        tmux_target: r.tmux_target,
+        mode: r.mode,
+        status: r.status,
+        tokens: r.tokens,
+        cost_usd: r.cost_usd,
+        started: r.started,
+        ended: r.ended,
+        result_summary: r.result_summary,
+        diffstat: r.diffstat,
+    }
+}
+
+fn approval_to_dto(a: rat_store::rows::Approval) -> ApprovalDto {
+    ApprovalDto {
+        id: a.id,
+        created: a.created,
+        kind: a.kind,
+        risk: a.risk,
+        title: a.title,
+        reason: a.reason,
+        cwd: a.cwd,
+        target: a.target,
+        agent_identity: a.agent_identity,
+        payload: a.payload,
+        expected_impact: a.expected_impact,
+        expires_at: a.expires_at,
+        status: a.status,
+        decided_at: a.decided_at,
+        decided_via: a.decided_via,
+        decision_note: a.decision_note,
+        execution: a.execution,
     }
 }

@@ -17,6 +17,11 @@ pub mod methods {
     pub const PUSHBACKS_RECENT: &str = "pushbacks.recent";
     pub const PUSHBACKS_FEEDBACK: &str = "pushbacks.feedback";
     pub const LLM_STATUS: &str = "llm.status";
+    pub const WORKBENCH_START: &str = "workbench.start";
+    pub const WORKBENCH_RUNS: &str = "workbench.runs";
+    pub const WORKBENCH_TAIL: &str = "workbench.tail";
+    pub const APPROVALS_PENDING: &str = "approvals.pending";
+    pub const APPROVALS_DECIDE: &str = "approvals.decide";
 }
 
 pub mod errcodes {
@@ -251,6 +256,86 @@ pub struct LlmKeyPresence {
     pub openai: bool,
     pub anthropic: bool,
     pub openrouter: bool,
+}
+
+// ---- Workbench DTOs ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkbenchStartParams {
+    pub project_id: String,
+    pub title: String,
+    #[serde(default = "default_adapter")]
+    pub adapter: String,
+}
+
+fn default_adapter() -> String {
+    "fakeagent".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkbenchRunsParams {
+    #[serde(default)]
+    pub n: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkbenchTailParams {
+    pub run_id: String,
+    #[serde(default)]
+    pub lines: Option<u32>,
+}
+
+/// Wire DTO mirroring `rat_store::rows::AgentRun`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentRunDto {
+    pub id: String,
+    pub adapter: String,
+    pub task_title: String,
+    pub project_id: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub tmux_target: Option<String>,
+    pub mode: String,
+    pub status: String,
+    pub tokens: serde_json::Value,
+    pub cost_usd: f64,
+    pub started: i64,
+    pub ended: Option<i64>,
+    pub result_summary: Option<String>,
+    pub diffstat: Option<serde_json::Value>,
+}
+
+/// Wire DTO mirroring `rat_store::rows::Approval`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApprovalDto {
+    pub id: String,
+    pub created: i64,
+    pub kind: String,
+    pub risk: i64,
+    pub title: String,
+    pub reason: String,
+    pub cwd: Option<String>,
+    pub target: Option<String>,
+    pub agent_identity: String,
+    pub payload: serde_json::Value,
+    pub expected_impact: serde_json::Value,
+    pub expires_at: i64,
+    pub status: String,
+    pub decided_at: Option<i64>,
+    pub decided_via: Option<String>,
+    pub decision_note: Option<String>,
+    pub execution: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApprovalsDecideParams {
+    pub id: String,
+    /// "approve" | "deny"
+    pub verdict: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub slug: Option<String>,
 }
 
 #[cfg(test)]
