@@ -39,6 +39,21 @@ fn key_from_env(p: &Provider) -> Option<String> {
     }
 }
 
+/// Run a keyring operation on a fresh OS thread.
+///
+/// keyring's async-secret-service backend drives zbus with an internal
+/// `block_on`, which panics if called from inside a tokio runtime ("cannot
+/// start a runtime from within a runtime"). Every caller of this module is
+/// inside #[tokio::main], so each keyring op hops to a plain thread where
+/// zbus can spin its own executor. Key ops are rare (startup + `rat setup`),
+/// so the thread spawn cost is irrelevant.
+fn off_runtime<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    match std::thread::spawn(f).join() {
+        Ok(v) => v,
+        Err(_) => panic!("keyring thread panicked"),
+    }
+}
+
 /// Get the API key for the given provider.
 ///
 /// Checks env override first (useful for tests/CI), then falls back to the
@@ -50,20 +65,22 @@ pub fn get_key(p: Provider) -> Result<String, LlmError> {
     }
 
     // 2. keyring
-    match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
-        Ok(entry) => {
-            entry.get_password().map_err(|_| LlmError::MissingKey(provider_name(&p).to_string()))
-        }
-        Err(_) => Err(LlmError::MissingKey(provider_name(&p).to_string())),
-    }
+    let name = provider_name(&p).to_string();
+    off_runtime(move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
+        Ok(entry) => entry.get_password().map_err(|_| LlmError::MissingKey(name)),
+        Err(_) => Err(LlmError::MissingKey(name)),
+    })
 }
 
 /// Store the API key for the given provider in the system keyring.
 pub fn set_key(p: Provider, value: &str) -> Result<(), LlmError> {
-    let entry = keyring::Entry::new(keyring_service(), keyring_account(&p))
-        .map_err(|_| LlmError::MissingKey(provider_name(&p).to_string()))?;
-    entry.set_password(value)
-        .map_err(|_| LlmError::MissingKey(provider_name(&p).to_string()))
+    let name = provider_name(&p).to_string();
+    let value = value.to_string();
+    off_runtime(move || {
+        let entry = keyring::Entry::new(keyring_service(), keyring_account(&p))
+            .map_err(|_| LlmError::MissingKey(name.clone()))?;
+        entry.set_password(&value).map_err(|_| LlmError::MissingKey(name))
+    })
 }
 
 /// Check whether a key is available (env or keyring), without erroring.
@@ -76,10 +93,10 @@ pub fn key_present(p: Provider) -> bool {
     }
 
     // keyring
-    match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
+    off_runtime(move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
         Ok(entry) => entry.get_password().is_ok(),
         Err(_) => false,
-    }
+    })
 }
 
 #[cfg(test)]

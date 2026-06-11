@@ -11,7 +11,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-keyring = { version = "3", default-features = true }
+# keyring 3 ships NO platform backend by default (silent in-memory mock!) —
+# async-secret-service = zbus-based Secret Service, no libdbus system dep.
+keyring = { version = "3", default-features = false, features = ["async-secret-service", "crypto-rust", "tokio"] }
 rat-core = { path = "../rat-core" }
 rat-proto = { path = "../rat-proto" }
 rat-store = { path = "../rat-store" }
