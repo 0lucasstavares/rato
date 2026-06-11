@@ -9,18 +9,24 @@ use clap::Parser;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+use rat_brain::backend::{BackendConfig, Provider, make_backend};
+use rat_brain::keys;
+use rat_brain::critic::Critic;
 use rat_core::clock::{Clock, SystemClock};
 use rat_core::paths;
+use rat_daemon::config::Config;
 use rat_daemon::ingest::Ingest;
+use rat_daemon::memory_searcher::DaemonMemorySearcher;
 use rat_daemon::mode::{self, ModeManager};
-use rat_daemon::server::{serve, ServerCtx};
+use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
+use rat_memory::embed::EmbeddingClient;
 use rat_proto::NewEvent;
 use rat_sensors::gitwatch::{self, HeadState};
 use rat_sensors::proc::{proc_detail, scan_procs, ProcWatcher, ALLOWLIST};
 use rat_store::store::Store;
 
-/// RATO daemon: observes, remembers, critiques. M1: cheap sensors.
+/// RATO daemon: observes, remembers, critiques.
 #[derive(Parser)]
 #[command(name = "ratd", version)]
 struct Args {
@@ -33,6 +39,9 @@ struct Args {
     /// Disable sensors (clipboard/proc/git/idle) — RPC-only mode for tests
     #[arg(long)]
     no_sensors: bool,
+    /// Disable critic (LLM ticks) — for tests or when no LLM key is configured
+    #[arg(long)]
+    no_critic: bool,
 }
 
 #[tokio::main]
@@ -91,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("sensors disabled (--no-sensors)");
     }
 
-    // periodic sessionizer tick: close sessions gone silent past the gap
+    // Periodic sessionizer tick: close sessions gone silent past the gap
     {
         let ingest = ingest.clone();
         tokio::spawn(async move {
@@ -106,10 +115,181 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // --- Config + LLM setup ---
+    let config_path = Config::default_path();
+    let config = Config::load_or_init(&config_path);
+
+    let provider = match config.llm.provider.as_str() {
+        "anthropic" => Provider::Anthropic,
+        "openrouter" => Provider::OpenRouter,
+        _ => Provider::OpenAi,
+    };
+
+    let llm_key = keys::get_key(provider.clone()).ok();
+    let backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
+        llm_key.as_ref().map(|key| {
+            make_backend(
+                &BackendConfig {
+                    provider: provider.clone(),
+                    base_url: None,
+                    critic_model: config.llm.critic_model.clone(),
+                    cheap_model: config.llm.cheap_model.clone(),
+                },
+                key.clone(),
+            )
+        });
+
+    // EmbeddingClient (OpenAI embeddings regardless of critic provider)
+    let openai_key = std::env::var("RATO_OPENAI_KEY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| keys::get_key(Provider::OpenAi).ok());
+    let embedder: Option<EmbeddingClient> = openai_key.as_ref().map(|key| {
+        EmbeddingClient::new("https://api.openai.com".to_string(), key.clone())
+    });
+
+    let last_error: Arc<std::sync::Mutex<Option<String>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let critic_enabled = config.critic.enabled && !args.no_critic && backend.is_some();
+
+    let llm_status = Arc::new(LlmStatusState {
+        provider: config.llm.provider.clone(),
+        embedding_enabled: embedder.is_some(),
+        critic_enabled,
+        last_error: std::sync::Mutex::new(None),
+        openai_key: keys::key_present(Provider::OpenAi),
+        anthropic_key: keys::key_present(Provider::Anthropic),
+        openrouter_key: keys::key_present(Provider::OpenRouter),
+    });
+
+    if critic_enabled {
+        let backend_box = backend.unwrap(); // safe since critic_enabled requires it
+        let memory_searcher: Option<Box<dyn rat_brain::critic::MemorySearcher>> =
+            Some(Box::new(DaemonMemorySearcher { embedder: embedder.clone() }));
+        let critic = Arc::new(Critic::new(
+            store.clone(),
+            backend_box,
+            memory_searcher,
+            clock.clone(),
+        ));
+
+        // Combined fast+slow tick loop
+        {
+            let critic = critic.clone();
+            let last_error = last_error.clone();
+            let fast_s = config.critic.fast_tick_s;
+            let slow_s = config.critic.slow_tick_s;
+            tokio::spawn(async move {
+                let mut fast_interval =
+                    tokio::time::interval(Duration::from_secs(fast_s));
+                fast_interval
+                    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut slow_interval =
+                    tokio::time::interval(Duration::from_secs(slow_s));
+                slow_interval
+                    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tokio::select! {
+                        _ = fast_interval.tick() => {
+                            let signals = critic.fast_tick().await;
+                            if !signals.is_empty() {
+                                if let Some(pb) = critic.slow_tick(&signals).await {
+                                    tracing::info!("critic: pushback created {}", pb.id);
+                                    if let Ok(mut e) = last_error.lock() {
+                                        *e = None;
+                                    }
+                                }
+                            }
+                        }
+                        _ = slow_interval.tick() => {
+                            let signals = critic.fast_tick().await;
+                            if !signals.is_empty() {
+                                if let Some(pb) = critic.slow_tick(&signals).await {
+                                    tracing::info!("critic slow_tick: pushback {}", pb.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Hourly consolidation jobs loop
+        {
+            let store_h = store.clone();
+            let embedder_h = embedder.clone();
+            let clock_h = clock.clone();
+            // Create a second backend for hourly (can't share the one moved into Critic)
+            let hourly_backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
+                llm_key.as_ref().map(|key| {
+                    make_backend(
+                        &BackendConfig {
+                            provider: provider.clone(),
+                            base_url: None,
+                            critic_model: config.llm.critic_model.clone(),
+                            cheap_model: config.llm.cheap_model.clone(),
+                        },
+                        key.clone(),
+                    )
+                });
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(3600));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = rat_memory::jobs::hourly(
+                        &store_h,
+                        hourly_backend.as_deref(),
+                        embedder_h.as_ref(),
+                        &clock_h,
+                    )
+                    .await
+                    {
+                        tracing::warn!("hourly job error: {e}");
+                    }
+                }
+            });
+        }
+
+        // Nightly loop (next 03:30 UTC, then every 24h)
+        {
+            let store_n = store.clone();
+            let clock_n = clock.clone();
+            tokio::spawn(async move {
+                let delay_secs = secs_until_0330();
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                loop {
+                    if let Err(e) =
+                        rat_memory::jobs::nightly(&store_n, None, &clock_n).await
+                    {
+                        tracing::warn!("nightly job error: {e}");
+                    }
+                    tokio::time::sleep(Duration::from_secs(86400)).await;
+                }
+            });
+        }
+    } else {
+        tracing::info!(
+            "critic disabled (--no-critic={}, key_present={}, config.enabled={})",
+            args.no_critic,
+            backend.is_some(),
+            config.critic.enabled
+        );
+    }
+
     tracing::info!("ratd {} listening on {}", env!("CARGO_PKG_VERSION"), socket.display());
     tracing::info!("event store at {}", db.display());
 
-    let ctx = Arc::new(ServerCtx { store, ingest, mode, started: Instant::now(), db_path: db });
+    let ctx = Arc::new(ServerCtx {
+        store,
+        ingest,
+        mode,
+        started: Instant::now(),
+        db_path: db,
+        clock,
+        embedder,
+        llm_status,
+    });
 
     tokio::select! {
         _ = serve(listener, ctx) => {}
@@ -237,5 +417,22 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = term.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
+    }
+}
+
+/// Compute seconds until next 03:30 UTC (simple modulo arithmetic).
+/// DST/leap imprecision is acceptable.
+fn secs_until_0330() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs =
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    // 03:30 UTC = 3*3600 + 30*60 = 12600 seconds from midnight
+    let target_secs_in_day: u64 = 3 * 3600 + 30 * 60;
+    let secs_in_day = 86400u64;
+    let current_secs_in_day = now_secs % secs_in_day;
+    if current_secs_in_day < target_secs_in_day {
+        target_secs_in_day - current_secs_in_day
+    } else {
+        secs_in_day - current_secs_in_day + target_secs_in_day
     }
 }

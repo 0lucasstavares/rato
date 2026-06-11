@@ -9,7 +9,9 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
 
-use rat_proto::{methods, Event, ModeState, NewEvent, Observation, Project, WorkSession};
+use rat_proto::{
+    methods, Event, HitDto, ModeState, NewEvent, Observation, Project, PushbackDto, WorkSession,
+};
 
 /// RATO control CLI.
 #[derive(Parser)]
@@ -83,6 +85,39 @@ enum Cmd {
     },
     /// Check the local installation
     Doctor,
+    /// Import API keys from key files and set the LLM provider
+    Setup {
+        #[arg(long, default_value = "openai", value_parser = ["openai", "anthropic", "openrouter"])]
+        provider: String,
+        /// Directory containing key files (default: ~/rato/keys)
+        #[arg(long)]
+        keys_dir: Option<PathBuf>,
+    },
+    /// Search memory and observations
+    Search {
+        query: String,
+        #[arg(short, default_value_t = 8)]
+        n: u32,
+    },
+    /// Show and manage pushbacks
+    Pushbacks {
+        #[arg(long, default_value_t = 10)]
+        n: u32,
+        #[command(subcommand)]
+        cmd: Option<PushbacksCmd>,
+    },
+    /// Show LLM / critic configuration status
+    LlmStatus,
+}
+
+#[derive(Subcommand)]
+enum PushbacksCmd {
+    /// Record feedback for a pushback
+    Feedback {
+        id: String,
+        /// "useful" | "dismiss" | "snooze"
+        verdict: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,6 +133,27 @@ enum EventsCmd {
 enum Shell {
     Bash,
     Zsh,
+}
+
+/// Reads key files from `keys_dir`. Returns a map of provider → key (trimmed).
+/// Files: antr_k.txt → anthropic, open_k.txt → openai, openr_k.txt → openrouter.
+pub fn read_key_files(keys_dir: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let mapping = [
+        ("antr_k.txt", "anthropic"),
+        ("open_k.txt", "openai"),
+        ("openr_k.txt", "openrouter"),
+    ];
+    let mut result = std::collections::HashMap::new();
+    for (file, provider) in &mapping {
+        let path = keys_dir.join(file);
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            let trimmed = contents.trim().to_string();
+            if !trimmed.is_empty() {
+                result.insert(provider.to_string(), trimmed);
+            }
+        }
+    }
+    result
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -193,6 +249,127 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Install { no_systemctl, ratd_path } => install::install(no_systemctl, ratd_path)?,
         Cmd::Doctor => doctor::doctor(&socket).await?,
+        Cmd::Setup { provider, keys_dir } => {
+            let keys_dir = keys_dir.unwrap_or_else(|| {
+                std::env::var("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join("rato")
+                    .join("keys")
+            });
+            let keys = read_key_files(&keys_dir);
+            if keys.is_empty() {
+                println!("(no key files found in {})", keys_dir.display());
+            }
+            for (prov, value) in &keys {
+                let p = match prov.as_str() {
+                    "anthropic" => rat_brain::backend::Provider::Anthropic,
+                    "openrouter" => rat_brain::backend::Provider::OpenRouter,
+                    _ => rat_brain::backend::Provider::OpenAi,
+                };
+                match rat_brain::keys::set_key(p, value) {
+                    Ok(()) => println!("stored rato/{} ({} chars)", prov, value.len()),
+                    Err(e) => eprintln!("failed to store {}: {}", prov, e),
+                }
+            }
+            // Write config with chosen provider
+            let config_path = rat_daemon::config::Config::default_path();
+            let mut config = rat_daemon::config::Config::load_or_init(&config_path);
+            config.llm.provider = provider.clone();
+            if let Ok(contents) = toml::to_string(&config) {
+                if let Some(dir) = config_path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&config_path, contents);
+            }
+            println!("provider set to {}", provider);
+        }
+        Cmd::Search { query, n } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let hits: Vec<HitDto> = serde_json::from_value(
+                c.call(
+                    methods::MEMORY_SEARCH,
+                    serde_json::json!({ "query": query, "n": n }),
+                )
+                .await?,
+            )?;
+            if hits.is_empty() {
+                println!("(no results)");
+            }
+            for h in hits {
+                println!("{:<12} {:.4}  {}", h.kind, h.score, h.id);
+            }
+        }
+        Cmd::Pushbacks { n, cmd: None } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let pbs: Vec<PushbackDto> = serde_json::from_value(
+                c.call(methods::PUSHBACKS_RECENT, serde_json::json!({ "n": n })).await?,
+            )?;
+            if pbs.is_empty() {
+                println!("(no pushbacks)");
+            }
+            for pb in pbs {
+                println!(
+                    "{}  [{:<10}]  {:<15}  {}",
+                    pb.ts, pb.status, pb.severity, pb.title
+                );
+            }
+        }
+        Cmd::Pushbacks { cmd: Some(PushbacksCmd::Feedback { id, verdict }), .. } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let pb: PushbackDto = serde_json::from_value(
+                c.call(
+                    methods::PUSHBACKS_FEEDBACK,
+                    serde_json::json!({ "id": id, "verdict": verdict }),
+                )
+                .await?,
+            )?;
+            println!("feedback recorded: {} → {}", pb.id, pb.status);
+        }
+        Cmd::LlmStatus => {
+            let mut c = client::Client::connect(&socket).await?;
+            let s: rat_proto::LlmStatusResult =
+                serde_json::from_value(c.call(methods::LLM_STATUS, Value::Null).await?)?;
+            println!("provider:          {}", s.provider);
+            println!("critic_enabled:    {}", s.critic_enabled);
+            println!("embedding_enabled: {}", s.embedding_enabled);
+            println!("key openai:        {}", s.keys.openai);
+            println!("key anthropic:     {}", s.keys.anthropic);
+            println!("key openrouter:    {}", s.keys.openrouter);
+            if let Some(err) = s.last_error {
+                println!("last_error:        {}", err);
+            }
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_key_files_trims_whitespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("open_k.txt"), "  sk-test  \n").unwrap();
+        std::fs::write(tmp.path().join("antr_k.txt"), "ant-key").unwrap();
+        let keys = read_key_files(tmp.path());
+        assert_eq!(keys.get("openai").map(|s| s.as_str()), Some("sk-test"));
+        assert_eq!(keys.get("anthropic").map(|s| s.as_str()), Some("ant-key"));
+        assert_eq!(keys.get("openrouter"), None);
+    }
+
+    #[test]
+    fn read_key_files_missing_dir_returns_empty() {
+        let keys = read_key_files(std::path::Path::new("/nonexistent/path/xyz"));
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn read_key_files_empty_file_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("open_k.txt"), "   \n   ").unwrap();
+        let keys = read_key_files(tmp.path());
+        assert_eq!(keys.get("openai"), None);
+    }
 }

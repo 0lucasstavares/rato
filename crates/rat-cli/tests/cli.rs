@@ -18,7 +18,7 @@ fn start_daemon(tmp: &Path) -> PathBuf {
             let store = rat_store::store::Store::open(&db, clock.clone()).unwrap();
             let ingest = Arc::new(rat_daemon::ingest::Ingest::new(
                 store.clone(),
-                clock,
+                clock.clone(),
                 rat_daemon::sessionizer::Sessionizer::new(rat_daemon::sessionizer::DEFAULT_GAP_MS),
             ));
             let mode = Arc::new(rat_daemon::mode::ModeManager::new(0));
@@ -28,6 +28,9 @@ fn start_daemon(tmp: &Path) -> PathBuf {
                 mode,
                 started: Instant::now(),
                 db_path: db,
+                clock,
+                embedder: None,
+                llm_status: rat_daemon::server::LlmStatusState::disabled(),
             });
             let listener = tokio::net::UnixListener::bind(&socket2).unwrap();
             rat_daemon::server::serve(listener, ctx).await;

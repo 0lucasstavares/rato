@@ -11,13 +11,15 @@ path = "src/main.rs"
 rat-client = { path = "../rat-client" }
 rat-core = { path = "../rat-core" }
 rat-proto = { path = "../rat-proto" }
+rat-brain = { path = "../rat-brain" }
+rat-daemon = { path = "../rat-daemon" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+toml = "0.8"
 
 [dev-dependencies]
-rat-daemon = { path = "../rat-daemon" }
 rat-store = { path = "../rat-store" }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }

@@ -45,6 +45,7 @@ enum Cmd {
     ObservationsByIds { ids: Vec<String>, reply: Reply<Vec<Observation>> },
     InsertPushback { pb: NewPushback, reply: Reply<Pushback> },
     RecentPushbacks { limit: u32, reply: Reply<Vec<Pushback>> },
+    GetPushback { id: String, reply: Reply<Option<Pushback>> },
     PushbackFeedback { id: String, status: String, decided_at: i64, latency_ms: i64, reply: Reply<()> },
     PushbacksSince { ts: i64, reply: Reply<Vec<Pushback>> },
     InsertApiCall {
@@ -338,6 +339,14 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
+    pub async fn get_pushback(&self, id: String) -> Result<Option<Pushback>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetPushback { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
     pub async fn pushback_feedback(
         &self,
         id: String,
@@ -543,6 +552,9 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             }
             Cmd::RecentPushbacks { limit, reply } => {
                 let _ = reply.send(do_recent_pushbacks(&conn, limit));
+            }
+            Cmd::GetPushback { id, reply } => {
+                let _ = reply.send(do_get_pushback(&conn, &id));
             }
             Cmd::PushbackFeedback { id, status, decided_at, latency_ms, reply } => {
                 let _ = reply.send(do_pushback_feedback(&conn, &id, &status, decided_at, latency_ms));
@@ -1228,6 +1240,21 @@ fn do_recent_pushbacks(conn: &Connection, limit: u32) -> Result<Vec<Pushback>, S
     )?;
     let rows: Vec<_> = stmt.query_map(params![limit], row_to_pushback)?.collect::<Result<_, _>>()?;
     rows.into_iter().map(tuple_to_pushback).collect()
+}
+
+fn do_get_pushback(conn: &Connection, id: &str) -> Result<Option<Pushback>, StoreError> {
+    let result = conn.query_row(
+        "SELECT id, ts, mode, trigger, severity, title, message_en, message_pt,
+                evidence, proposals, confidence, status, decided_at, latency_ms
+         FROM pushbacks WHERE id = ?1",
+        params![id],
+        row_to_pushback,
+    );
+    match result {
+        Ok(row) => Ok(Some(tuple_to_pushback(row)?)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
 }
 
 fn do_pushback_feedback(conn: &Connection, id: &str, status: &str, decided_at: i64, latency_ms: i64) -> Result<(), StoreError> {

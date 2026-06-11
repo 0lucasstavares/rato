@@ -5,7 +5,7 @@ use std::time::Instant;
 use rat_core::clock::SystemClock;
 use rat_daemon::ingest::Ingest;
 use rat_daemon::mode::ModeManager;
-use rat_daemon::server::{serve, ServerCtx};
+use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_proto::{errcodes, Response, PROTO_VERSION};
 use rat_store::store::Store;
@@ -21,7 +21,16 @@ async fn start() -> (tempfile::TempDir, PathBuf) {
     let store = Store::open(&db, clock.clone()).unwrap();
     let ingest = Arc::new(Ingest::new(store.clone(), clock.clone(), Sessionizer::new(DEFAULT_GAP_MS)));
     let mode = Arc::new(ModeManager::new(0));
-    let ctx = Arc::new(ServerCtx { store, ingest, mode, started: Instant::now(), db_path: db });
+    let ctx = Arc::new(ServerCtx {
+        store,
+        ingest,
+        mode,
+        started: Instant::now(),
+        db_path: db,
+        clock,
+        embedder: None,
+        llm_status: LlmStatusState::disabled(),
+    });
     let listener = UnixListener::bind(&socket).unwrap();
     tokio::spawn(serve(listener, ctx));
     (tmp, socket)

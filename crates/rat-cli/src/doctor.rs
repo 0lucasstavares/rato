@@ -53,5 +53,19 @@ pub async fn doctor(socket: &Path) -> anyhow::Result<()> {
             _ => println!("[warn] {bin}: not found (needed from M1/M4 onward)"),
         }
     }
+
+    // LLM key presence checks
+    for (prov, provider) in [
+        ("openai", rat_brain::backend::Provider::OpenAi),
+        ("anthropic", rat_brain::backend::Provider::Anthropic),
+        ("openrouter", rat_brain::backend::Provider::OpenRouter),
+    ] {
+        if rat_brain::keys::key_present(provider) {
+            println!("[ok]   key {}: present", prov);
+        } else {
+            println!("[warn] key {}: not found (run `rat setup` to import)", prov);
+        }
+    }
+
     Ok(())
 }

@@ -13,6 +13,10 @@ pub mod methods {
     pub const PROJECTS_LIST: &str = "projects.list";
     pub const SESSIONS_RECENT: &str = "sessions.recent";
     pub const MODE_GET: &str = "mode.get";
+    pub const MEMORY_SEARCH: &str = "memory.search";
+    pub const PUSHBACKS_RECENT: &str = "pushbacks.recent";
+    pub const PUSHBACKS_FEEDBACK: &str = "pushbacks.feedback";
+    pub const LLM_STATUS: &str = "llm.status";
 }
 
 pub mod errcodes {
@@ -182,6 +186,71 @@ impl Default for ObsRecentParams {
     fn default() -> Self {
         Self { limit: default_limit(), kind: None }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemorySearchParams {
+    pub query: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub n: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HitDto {
+    pub id: String,
+    /// "observation" | "memory"
+    pub kind: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PushbacksRecentParams {
+    #[serde(default)]
+    pub n: Option<u32>,
+}
+
+/// Wire DTO mirroring `rat_store::rows::Pushback`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PushbackDto {
+    pub id: String,
+    pub ts: i64,
+    pub mode: String,
+    pub trigger: String,
+    pub severity: String,
+    pub title: String,
+    pub message_en: String,
+    pub message_pt: String,
+    pub evidence: serde_json::Value,
+    pub proposals: serde_json::Value,
+    pub confidence: f64,
+    pub status: String,
+    pub decided_at: Option<i64>,
+    pub latency_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PushbackFeedbackParams {
+    pub id: String,
+    /// "useful" | "dismiss" | "snooze"
+    pub verdict: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmStatusResult {
+    pub provider: String,
+    pub keys: LlmKeyPresence,
+    pub embedding_enabled: bool,
+    pub critic_enabled: bool,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmKeyPresence {
+    pub openai: bool,
+    pub anthropic: bool,
+    pub openrouter: bool,
 }
 
 #[cfg(test)]

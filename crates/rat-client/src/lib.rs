@@ -109,7 +109,7 @@ mod tests {
 
     use rat_daemon::ingest::Ingest;
     use rat_daemon::mode::ModeManager;
-    use rat_daemon::server::{serve, ServerCtx};
+    use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
     use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
     use rat_store::store::Store;
 
@@ -133,7 +133,7 @@ mod tests {
                     let store = Store::open(&db, clock.clone()).unwrap();
                     let ingest = Arc::new(Ingest::new(
                         store.clone(),
-                        clock,
+                        clock.clone(),
                         Sessionizer::new(DEFAULT_GAP_MS),
                     ));
                     let mode = Arc::new(ModeManager::new(0));
@@ -143,6 +143,9 @@ mod tests {
                         mode,
                         started: Instant::now(),
                         db_path: db,
+                        clock,
+                        embedder: None,
+                        llm_status: LlmStatusState::disabled(),
                     });
                     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
                     ready_tx.send(()).unwrap();
@@ -182,5 +185,83 @@ mod tests {
         let _daemon2 = TestDaemon::start(socket.clone(), db);
         let v = mc.call(methods::STATUS, Value::Null).await.unwrap();
         assert!(v["version"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_pushbacks_recent_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket = tmp.path().join("s.sock");
+        let db = tmp.path().join("d.db");
+
+        let _daemon = TestDaemon::start(socket.clone(), db);
+        let mut c = Client::connect(&socket).await.unwrap();
+
+        let pbs: Vec<rat_proto::PushbackDto> = serde_json::from_value(
+            c.call(rat_proto::methods::PUSHBACKS_RECENT, Value::Null).await.unwrap(),
+        )
+        .unwrap();
+        assert!(pbs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_search_no_results() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket = tmp.path().join("s.sock");
+        let db = tmp.path().join("d.db");
+
+        let _daemon = TestDaemon::start(socket.clone(), db);
+        let mut c = Client::connect(&socket).await.unwrap();
+
+        let hits: Vec<rat_proto::HitDto> = serde_json::from_value(
+            c.call(
+                rat_proto::methods::MEMORY_SEARCH,
+                serde_json::json!({ "query": "cargo", "n": 5 }),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_llm_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket = tmp.path().join("s.sock");
+        let db = tmp.path().join("d.db");
+
+        let _daemon = TestDaemon::start(socket.clone(), db);
+        let mut c = Client::connect(&socket).await.unwrap();
+
+        let s: rat_proto::LlmStatusResult = serde_json::from_value(
+            c.call(rat_proto::methods::LLM_STATUS, Value::Null).await.unwrap(),
+        )
+        .unwrap();
+        // With disabled LlmStatusState: provider="openai", critic_enabled=false
+        assert_eq!(s.provider, "openai");
+        assert!(!s.critic_enabled);
+        assert!(!s.embedding_enabled);
+        assert!(s.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_pushbacks_feedback_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket = tmp.path().join("s.sock");
+        let db = tmp.path().join("d.db");
+
+        let _daemon = TestDaemon::start(socket.clone(), db);
+        let mut c = Client::connect(&socket).await.unwrap();
+
+        let result = c
+            .call(
+                rat_proto::methods::PUSHBACKS_FEEDBACK,
+                serde_json::json!({ "id": "nonexistent", "verdict": "useful" }),
+            )
+            .await;
+        // Should return an RPC error (pushback not found)
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("pushback not found") || err.contains("-32600"));
     }
 }
