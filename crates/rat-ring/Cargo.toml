@@ -1,0 +1,16 @@
+[package]
+name = "rat-ring"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chacha20poly1305 = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+libc = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rat-core = { path = "../rat-core" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

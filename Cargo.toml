@@ -12,6 +12,7 @@ members = [
     "crates/rat-brain",
     "crates/rat-memory",
     "crates/rat-workbench",
+    "crates/rat-ring",
 ]
 # built separately (needs webkit2gtk system libs): cargo build --manifest-path apps/shell/src-tauri/Cargo.toml
 exclude = ["apps/shell/src-tauri"]
