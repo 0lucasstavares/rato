@@ -1,0 +1,8 @@
+[package]
+name = "rat-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ulid = { workspace = true }
+libc = { workspace = true }
