@@ -4,6 +4,7 @@ members = [
     "crates/rat-core",
     "crates/rat-proto",
     "crates/rat-store",
+    "crates/rat-sensors",
     "crates/rat-daemon",
     "crates/rat-cli",
 ]
@@ -25,6 +26,9 @@ clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 ulid = "1"
 libc = "0.2"
+regex = "1"
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
