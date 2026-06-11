@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 rat-core = { path = "../rat-core" }
 rat-proto = { path = "../rat-proto" }
+rat-sensors = { path = "../rat-sensors" }
 rat-store = { path = "../rat-store" }
 anyhow = { workspace = true }
 clap = { workspace = true }

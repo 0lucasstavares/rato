@@ -1008,6 +1008,7 @@ dependencies = [
  "clap",
  "rat-core",
  "rat-proto",
+ "rat-sensors",
  "rat-store",
  "serde_json",
  "tempfile",

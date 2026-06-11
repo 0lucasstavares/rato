@@ -3,7 +3,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rat_core::clock::SystemClock;
+use rat_daemon::ingest::Ingest;
+use rat_daemon::mode::ModeManager;
 use rat_daemon::server::{serve, ServerCtx};
+use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_proto::{errcodes, Response, PROTO_VERSION};
 use rat_store::store::Store;
 use serde_json::json;
@@ -14,8 +17,11 @@ async fn start() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let socket = tmp.path().join("ratd.sock");
     let db = tmp.path().join("rato.db");
-    let store = Store::open(&db, Arc::new(SystemClock)).unwrap();
-    let ctx = Arc::new(ServerCtx { store, started: Instant::now(), db_path: db });
+    let clock: Arc<dyn rat_core::clock::Clock> = Arc::new(SystemClock);
+    let store = Store::open(&db, clock.clone()).unwrap();
+    let ingest = Arc::new(Ingest::new(store.clone(), clock.clone(), Sessionizer::new(DEFAULT_GAP_MS)));
+    let mode = Arc::new(ModeManager::new(0));
+    let ctx = Arc::new(ServerCtx { store, ingest, mode, started: Instant::now(), db_path: db });
     let listener = UnixListener::bind(&socket).unwrap();
     tokio::spawn(serve(listener, ctx));
     (tmp, socket)
@@ -89,6 +95,61 @@ async fn full_round_trip_hello_status_append_recent() {
     let recent = recent.result.unwrap();
     assert_eq!(recent.as_array().unwrap().len(), 1);
     assert_eq!(recent[0]["payload"]["n"], 1);
+}
+
+#[tokio::test]
+async fn shell_cmd_flows_into_projects_sessions_observations_via_rpc() {
+    let (tmp, socket) = start().await;
+    // a fake repo for project attribution
+    let repo = tmp.path().join("acme");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+
+    let appended = c
+        .send(json!({"id": 2, "method": "events.append", "params": {
+            "kind": "shell_cmd", "source": "shell",
+            "payload": {"cmd": "cargo build", "cwd": repo.to_string_lossy(), "exit": 0, "duration_ms": 900}
+        }}))
+        .await;
+    assert!(appended.result.unwrap()["project_id"].is_string());
+
+    let projects = c.send(json!({"id": 3, "method": "projects.list"})).await.result.unwrap();
+    assert_eq!(projects.as_array().unwrap().len(), 1);
+    assert_eq!(projects[0]["name"], "acme");
+
+    let sessions = c.send(json!({"id": 4, "method": "sessions.recent"})).await.result.unwrap();
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert_eq!(sessions[0]["commands"], 1);
+    assert!(sessions[0]["ended"].is_null());
+
+    let obs = c
+        .send(json!({"id": 5, "method": "observations.recent", "params": {"kind": "shell_cmd"}}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(obs.as_array().unwrap().len(), 1);
+    assert_eq!(obs[0]["content"], "cargo build");
+
+    let mode = c.send(json!({"id": 6, "method": "mode.get"})).await.result.unwrap();
+    assert_eq!(mode["mode"], "active");
+}
+
+#[tokio::test]
+async fn rat_emit_loop_guard_returns_null() {
+    let (_tmp, socket) = start().await;
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+    let resp = c
+        .send(json!({"id": 2, "method": "events.append", "params": {
+            "kind": "shell_cmd", "source": "shell",
+            "payload": {"cmd": "rat emit foo", "cwd": "/tmp"}
+        }}))
+        .await;
+    assert!(resp.error.is_none());
+    // Some(Null) round-trips to None through Option<Value>; both mean "dropped"
+    assert!(resp.result.unwrap_or(serde_json::Value::Null).is_null());
 }
 
 #[tokio::test]

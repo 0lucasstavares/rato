@@ -3,16 +3,21 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rat_proto::{
-    errcodes, methods, HelloParams, HelloResult, NewEvent, RecentParams, Request, Response,
-    StatusResult, PROTO_VERSION,
+    errcodes, methods, HelloParams, HelloResult, NewEvent, ObsRecentParams, RecentParams, Request,
+    Response, StatusResult, PROTO_VERSION,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use rat_store::store::Store;
 
+use crate::ingest::Ingest;
+use crate::mode::ModeManager;
+
 pub struct ServerCtx {
     pub store: Store,
+    pub ingest: Arc<Ingest>,
+    pub mode: Arc<ModeManager>,
     pub started: Instant,
     pub db_path: PathBuf,
 }
@@ -111,8 +116,13 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             if ev.kind.is_empty() || ev.source.is_empty() {
                 return Response::err(req.id, errcodes::INVALID_REQUEST, "kind and source are required");
             }
-            match ctx.store.append(ev).await {
-                Ok(event) => Response::ok(req.id, serde_json::to_value(event).expect("serializes")),
+            match ctx.ingest.ingest(ev).await {
+                Ok(Some(event)) => {
+                    ctx.mode.note_activity(event.ts);
+                    Response::ok(req.id, serde_json::to_value(event).expect("serializes"))
+                }
+                // deliberately dropped (e.g. shell-hook loop guard)
+                Ok(None) => Response::ok(req.id, serde_json::Value::Null),
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
@@ -135,6 +145,53 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 Ok(events) => Response::ok(req.id, serde_json::to_value(events).expect("serializes")),
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
+        }
+        methods::OBSERVATIONS_RECENT => {
+            let params: ObsRecentParams = if req.params.is_null() {
+                ObsRecentParams::default()
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            match ctx.store.recent_observations(params.limit.min(1000), params.kind).await {
+                Ok(obs) => Response::ok(req.id, serde_json::to_value(obs).expect("serializes")),
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::PROJECTS_LIST => match ctx.store.list_projects().await {
+            Ok(projects) => Response::ok(req.id, serde_json::to_value(projects).expect("serializes")),
+            Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+        },
+        methods::SESSIONS_RECENT => {
+            let params: RecentParams = if req.params.is_null() {
+                RecentParams::default()
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            match ctx.store.recent_sessions(params.limit.min(1000)).await {
+                Ok(sessions) => Response::ok(req.id, serde_json::to_value(sessions).expect("serializes")),
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::MODE_GET => {
+            Response::ok(req.id, serde_json::to_value(ctx.mode.state()).expect("serializes"))
         }
         other => {
             Response::err(req.id, errcodes::METHOD_NOT_FOUND, format!("unknown method: {other}"))
