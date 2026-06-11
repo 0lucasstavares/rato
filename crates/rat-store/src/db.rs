@@ -48,6 +48,81 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_obs_ts ON observations(ts);
     CREATE INDEX idx_obs_kind_ts ON observations(kind, ts);",
+    // v3: memories, pushbacks, disclosures, api_calls, FTS5, embedding BLOBs
+    "ALTER TABLE work_sessions ADD COLUMN summary TEXT;
+    CREATE TABLE memories (
+        id               TEXT PRIMARY KEY,
+        type             TEXT NOT NULL,
+        project_id       TEXT,
+        title            TEXT NOT NULL,
+        body             TEXT NOT NULL,
+        confidence       REAL NOT NULL DEFAULT 0.7,
+        created          INTEGER NOT NULL,
+        updated          INTEGER NOT NULL,
+        source_event_ids TEXT NOT NULL DEFAULT '[]',
+        archived         INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE pushbacks (
+        id           TEXT PRIMARY KEY,
+        ts           INTEGER NOT NULL,
+        mode         TEXT NOT NULL,
+        trigger      TEXT NOT NULL,
+        severity     TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        message_en   TEXT NOT NULL,
+        message_pt   TEXT NOT NULL,
+        evidence     TEXT NOT NULL,
+        proposals    TEXT NOT NULL DEFAULT '[]',
+        confidence   REAL NOT NULL,
+        status       TEXT NOT NULL,
+        decided_at   INTEGER,
+        latency_ms   INTEGER
+    );
+    CREATE TABLE disclosures (
+        id               TEXT PRIMARY KEY,
+        ts               INTEGER NOT NULL,
+        api_call_id      TEXT,
+        model            TEXT NOT NULL,
+        purpose          TEXT NOT NULL,
+        memory_ids       TEXT NOT NULL DEFAULT '[]',
+        observation_ids  TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE api_calls (
+        id         TEXT PRIMARY KEY,
+        ts         INTEGER NOT NULL,
+        model      TEXT NOT NULL,
+        purpose    TEXT NOT NULL,
+        tokens_in  INTEGER,
+        tokens_out INTEGER,
+        cost_usd   REAL,
+        ok         INTEGER NOT NULL,
+        error      TEXT
+    );
+    CREATE TABLE metrics_daily (
+        date       TEXT NOT NULL,
+        project_id TEXT,
+        metrics    TEXT NOT NULL,
+        PRIMARY KEY (date, project_id)
+    );
+    CREATE VIRTUAL TABLE observations_fts USING fts5(content, content='', tokenize='unicode61');
+    CREATE VIRTUAL TABLE memories_fts USING fts5(title, body, content='', tokenize='unicode61');
+    CREATE TABLE vec_observations (obs_id TEXT PRIMARY KEY, embedding BLOB NOT NULL);
+    CREATE TABLE vec_memories (memory_id TEXT PRIMARY KEY, embedding BLOB NOT NULL);
+    CREATE INDEX idx_pushbacks_ts ON pushbacks(ts);
+    CREATE INDEX idx_memories_project ON memories(project_id, updated);
+    CREATE TRIGGER observations_fts_ai AFTER INSERT ON observations BEGIN
+        INSERT INTO observations_fts(rowid, content) VALUES (new.rowid, new.content);
+    END;
+    CREATE TRIGGER observations_fts_ad AFTER DELETE ON observations BEGIN
+        INSERT INTO observations_fts(observations_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    END;
+    CREATE TRIGGER memories_fts_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+    END;
+    CREATE TRIGGER memories_fts_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
+    END;
+    INSERT INTO observations_fts(rowid, content) SELECT rowid, content FROM observations;",
 ];
 
 pub fn open_db(path: &Path) -> Result<Connection, StoreError> {
@@ -124,9 +199,42 @@ mod tests {
         }
         let conn = open_db(&path).unwrap();
         let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, MIGRATIONS.len() as i64);
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn v2_database_upgrades_to_v3_with_fts_backfill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        // hand-build a v2 database with one observation row
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute_batch(MIGRATIONS[1]).unwrap();
+            conn.pragma_update(None, "user_version", 2i64).unwrap();
+            conn.execute(
+                "INSERT INTO observations (id, ts, kind, project_id, content, meta)
+                 VALUES ('obs1', 1000, 'shell_cmd', NULL, 'cargo build --release', '{}')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        // FTS backfill: should find the observation via FTS match
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations_fts WHERE observations_fts MATCH 'cargo'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "FTS backfill should find existing observations");
+        // summary column was added
+        conn.prepare("SELECT summary FROM work_sessions").unwrap();
     }
 
     #[test]

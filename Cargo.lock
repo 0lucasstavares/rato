@@ -1062,6 +1062,7 @@ dependencies = [
  "rat-core",
  "rat-proto",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

@@ -7,6 +7,7 @@ edition.workspace = true
 rat-core = { path = "../rat-core" }
 rat-proto = { path = "../rat-proto" }
 rusqlite = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
