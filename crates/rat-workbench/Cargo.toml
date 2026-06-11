@@ -1,0 +1,13 @@
+[package]
+name = "rat-workbench"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rat-core = { path = "../rat-core" }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
