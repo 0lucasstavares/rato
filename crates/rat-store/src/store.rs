@@ -15,7 +15,7 @@ use crate::db::open_db;
 use crate::error::StoreError;
 use crate::rows::{
     decode_embedding, encode_embedding, AgentRun, Approval, Blob, Memory, MemoryFilter, NewAgentRun,
-    NewApproval, NewMemory, NewPushback, Pushback,
+    NewApproval, NewMemory, NewPin, NewPushback, Pin, Pushback,
 };
 
 type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
@@ -115,6 +115,12 @@ enum Cmd {
     GetBlob { id: String, reply: Reply<Option<Blob>> },
     // v4 — project lookup by id
     GetProjectById { id: String, reply: Reply<Option<Project>> },
+    // v5 — pins
+    InsertPin { new_pin: NewPin, reply: Reply<Pin> },
+    ListPins { reply: Reply<Vec<Pin>> },
+    GetPin { id: String, reply: Reply<Option<Pin>> },
+    ExpirePins { now_ms: i64, reply: Reply<Vec<Pin>> },
+    DeletePin { id: String, reply: Reply<()> },
 }
 
 /// Cloneable handle to the single-writer SQLite actor thread.
@@ -641,6 +647,47 @@ impl Store {
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
+
+    // -----------------------------------------------------------------------
+    // v5 store API — pins
+    // -----------------------------------------------------------------------
+
+    pub async fn insert_pin(&self, new_pin: NewPin) -> Result<Pin, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertPin { new_pin, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    /// List all pins, newest first by created.
+    pub async fn list_pins(&self) -> Result<Vec<Pin>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx.send(Cmd::ListPins { reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_pin(&self, id: String) -> Result<Option<Pin>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx.send(Cmd::GetPin { id, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    /// Delete all pins whose `expires_at IS NOT NULL AND expires_at <= now_ms`.
+    /// Returns the deleted rows so the caller can unlink their files.
+    pub async fn expire_pins(&self, now_ms: i64) -> Result<Vec<Pin>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ExpirePins { now_ms, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn delete_pin(&self, id: String) -> Result<(), StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx.send(Cmd::DeletePin { id, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
 }
 
 fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) {
@@ -800,6 +847,22 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             // v4 — project lookup by id
             Cmd::GetProjectById { id, reply } => {
                 let _ = reply.send(do_get_project_by_id(&conn, &id));
+            }
+            // v5 — pins
+            Cmd::InsertPin { new_pin, reply } => {
+                let _ = reply.send(do_insert_pin(&conn, clock.as_ref(), new_pin));
+            }
+            Cmd::ListPins { reply } => {
+                let _ = reply.send(do_list_pins(&conn));
+            }
+            Cmd::GetPin { id, reply } => {
+                let _ = reply.send(do_get_pin(&conn, &id));
+            }
+            Cmd::ExpirePins { now_ms, reply } => {
+                let _ = reply.send(do_expire_pins(&conn, now_ms));
+            }
+            Cmd::DeletePin { id, reply } => {
+                let _ = reply.send(do_delete_pin(&conn, &id));
             }
         }
     }
@@ -2048,6 +2111,105 @@ fn do_get_blob(conn: &Connection, id: &str) -> Result<Option<Blob>, StoreError> 
     }
 }
 
+// ---------------------------------------------------------------------------
+// v5 implementation functions — pins
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::type_complexity)]
+type PinRow = (String, String, String, String, i64, Option<i64>, String, String);
+
+fn row_to_pin(r: &rusqlite::Row<'_>) -> rusqlite::Result<PinRow> {
+    Ok((
+        r.get(0)?, // id
+        r.get(1)?, // kind
+        r.get(2)?, // media
+        r.get(3)?, // path
+        r.get(4)?, // created
+        r.get(5)?, // expires_at
+        r.get(6)?, // reason
+        r.get(7)?, // meta (JSON text)
+    ))
+}
+
+fn tuple_to_pin(t: PinRow) -> Result<Pin, StoreError> {
+    Ok(Pin {
+        id: t.0,
+        kind: t.1,
+        media: t.2,
+        path: t.3,
+        created: t.4,
+        expires_at: t.5,
+        reason: t.6,
+        meta: serde_json::from_str(&t.7)?,
+    })
+}
+
+const PIN_SELECT: &str =
+    "SELECT id, kind, media, path, created, expires_at, reason, meta FROM pins";
+
+fn do_insert_pin(conn: &Connection, clock: &dyn Clock, np: NewPin) -> Result<Pin, StoreError> {
+    let p = Pin {
+        id: new_id(),
+        kind: np.kind,
+        media: np.media,
+        path: np.path,
+        created: clock.now_ms(),
+        expires_at: np.expires_at,
+        reason: np.reason,
+        meta: np.meta,
+    };
+    conn.execute(
+        "INSERT INTO pins (id, kind, media, path, created, expires_at, reason, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            p.id, p.kind, p.media, p.path, p.created, p.expires_at, p.reason,
+            serde_json::to_string(&p.meta)?
+        ],
+    )?;
+    Ok(p)
+}
+
+fn do_list_pins(conn: &Connection) -> Result<Vec<Pin>, StoreError> {
+    let sql = format!("{} ORDER BY created DESC", PIN_SELECT);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<PinRow> = stmt.query_map([], row_to_pin)?.collect::<Result<_, _>>()?;
+    rows.into_iter().map(tuple_to_pin).collect()
+}
+
+fn do_get_pin(conn: &Connection, id: &str) -> Result<Option<Pin>, StoreError> {
+    let sql = format!("{} WHERE id = ?1", PIN_SELECT);
+    match conn.query_row(&sql, params![id], row_to_pin) {
+        Ok(row) => Ok(Some(tuple_to_pin(row)?)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+/// Select pins where `expires_at IS NOT NULL AND expires_at <= now_ms`, delete them,
+/// and return the deleted rows so the caller can unlink their files.
+/// Manual pins (`expires_at IS NULL`) and future ones are untouched.
+fn do_expire_pins(conn: &Connection, now_ms: i64) -> Result<Vec<Pin>, StoreError> {
+    let sql = format!(
+        "{} WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+        PIN_SELECT
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<PinRow> = stmt.query_map(params![now_ms], row_to_pin)?.collect::<Result<_, _>>()?;
+    let pins: Vec<Pin> = rows.into_iter().map(tuple_to_pin).collect::<Result<_, _>>()?;
+    if !pins.is_empty() {
+        conn.execute(
+            "DELETE FROM pins WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+            params![now_ms],
+        )?;
+    }
+    Ok(pins)
+}
+
+fn do_delete_pin(conn: &Connection, id: &str) -> Result<(), StoreError> {
+    conn.execute("DELETE FROM pins WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 /// Compute the SHA-256 digest of `data` and return it as a 64-char hex string.
 fn sha256_hex(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
@@ -2790,5 +2952,119 @@ mod tests {
         let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
         let got = store.get_blob("nonexistent".into()).await.unwrap();
         assert!(got.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // v5 tests — pins
+    // -----------------------------------------------------------------------
+
+    fn new_pin_fixture(kind: &str, expires_at: Option<i64>) -> NewPin {
+        NewPin {
+            kind: kind.into(),
+            media: "screen".into(),
+            path: "/tmp/pin.png".into(),
+            expires_at,
+            reason: "test reason".into(),
+            meta: serde_json::json!({"source": "test"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn pin_insert_list_get_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let p = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+        assert_eq!(p.id.len(), 26);
+        assert_eq!(p.kind, "manual");
+        assert_eq!(p.media, "screen");
+        assert_eq!(p.created, 1_000);
+        assert!(p.expires_at.is_none());
+
+        // list returns the pin
+        let list = store.list_pins().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, p.id);
+
+        // get returns the pin
+        let got = store.get_pin(p.id.clone()).await.unwrap();
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().id, p.id);
+    }
+
+    #[tokio::test]
+    async fn pin_list_newest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        store.insert_pin(new_pin_fixture("auto", None)).await.unwrap();
+        clock.advance(100);
+        let newer = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+
+        let list = store.list_pins().await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, newer.id, "newest first");
+    }
+
+    #[tokio::test]
+    async fn pin_get_nonexistent_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+        let got = store.get_pin("does-not-exist".into()).await.unwrap();
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn expire_pins_returns_past_deletes_it_leaves_manual_and_future() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(5_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // auto pin expired in the past
+        let past = store.insert_pin(NewPin {
+            kind: "auto".into(),
+            media: "screen".into(),
+            path: "/tmp/past.png".into(),
+            expires_at: Some(4_000),  // <= 5_000, will be expired
+            reason: "old capture".into(),
+            meta: serde_json::Value::Null,
+        }).await.unwrap();
+
+        // manual pin (no expires_at)
+        let manual = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+
+        // auto pin that expires in the future
+        let future = store.insert_pin(NewPin {
+            kind: "auto".into(),
+            media: "audio".into(),
+            path: "/tmp/future.wav".into(),
+            expires_at: Some(9_000),  // > 5_000, should stay
+            reason: "future capture".into(),
+            meta: serde_json::Value::Null,
+        }).await.unwrap();
+
+        // expire at now=5_000
+        let expired = store.expire_pins(5_000).await.unwrap();
+        assert_eq!(expired.len(), 1, "only the past pin should be returned");
+        assert_eq!(expired[0].id, past.id);
+
+        // past pin is gone
+        assert!(store.get_pin(past.id.clone()).await.unwrap().is_none());
+
+        // manual and future pins still exist
+        assert!(store.get_pin(manual.id.clone()).await.unwrap().is_some());
+        assert!(store.get_pin(future.id.clone()).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_pin_removes_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        let p = store.insert_pin(new_pin_fixture("auto", Some(9_999))).await.unwrap();
+        store.delete_pin(p.id.clone()).await.unwrap();
+        assert!(store.get_pin(p.id).await.unwrap().is_none());
     }
 }

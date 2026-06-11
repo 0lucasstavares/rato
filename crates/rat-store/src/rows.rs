@@ -180,6 +180,35 @@ pub struct Blob {
 }
 
 // ---------------------------------------------------------------------------
+// Pin (v5)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Pin {
+    pub id: String,
+    /// `auto` | `manual`
+    pub kind: String,
+    /// `screen` | `audio` | `clipboard`
+    pub media: String,
+    pub path: String,
+    pub created: i64,
+    pub expires_at: Option<i64>,
+    pub reason: String,
+    /// Arbitrary JSON metadata.
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewPin {
+    pub kind: String,
+    pub media: String,
+    pub path: String,
+    pub expires_at: Option<i64>,
+    pub reason: String,
+    pub meta: Value,
+}
+
+// ---------------------------------------------------------------------------
 // Embedding helpers (Vec<f32> ↔ little-endian bytes)
 // ---------------------------------------------------------------------------
 

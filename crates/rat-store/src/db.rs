@@ -179,6 +179,18 @@ const MIGRATIONS: &[&str] = &[
         bytes   BLOB NOT NULL,
         created INTEGER NOT NULL
     );",
+    // v5: pins (M5 Eyes — screen/audio/clipboard capture records)
+    "CREATE TABLE pins (
+        id         TEXT PRIMARY KEY,
+        kind       TEXT NOT NULL,
+        media      TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        created    INTEGER NOT NULL,
+        expires_at INTEGER,
+        reason     TEXT NOT NULL,
+        meta       TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX idx_pins_expires ON pins(expires_at);",
 ];
 
 pub fn open_db(path: &Path) -> Result<Connection, StoreError> {
@@ -354,11 +366,10 @@ mod tests {
             )
             .unwrap();
         }
-        // open_db should run v4 migration and reach version 4
+        // open_db should run v4 (and v5) migrations and reach the latest version
         let conn = open_db(&path).unwrap();
         let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
-        assert_eq!(v, 4);
         // v3 data is still there
         let mem_count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0)).unwrap();
         assert_eq!(mem_count, 1, "existing memory row must survive migration");
@@ -392,5 +403,56 @@ mod tests {
         assert_eq!(mode, 0o600);
         let jm: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(jm.to_lowercase(), "wal");
+    }
+
+    #[test]
+    fn v4_database_upgrades_to_v5_keeping_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        // hand-build a v4 database with rows in v4 tables
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute_batch(MIGRATIONS[1]).unwrap();
+            conn.execute_batch(MIGRATIONS[2]).unwrap();
+            conn.execute_batch(MIGRATIONS[3]).unwrap();
+            conn.pragma_update(None, "user_version", 4i64).unwrap();
+            conn.execute(
+                "INSERT INTO approvals (id, created, kind, risk, title, reason, agent_identity,
+                                        payload, expected_impact, expires_at, status)
+                 VALUES ('a1', 1000, 'shell', 1, 'Test approval', 'Because', 'claude',
+                         '{}', '{}', 9999999, 'pending')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO agent_runs (id, adapter, task_title, project_id, worktree_path,
+                                         branch, mode, status, started)
+                 VALUES ('ar1', 'claude', 'Test run', 'proj1', '/tmp', 'main', 'headless',
+                         'running', 1000)",
+                [],
+            )
+            .unwrap();
+        }
+        // open_db should run v5 migration and reach version 5
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        assert_eq!(v, 5);
+        // v4 data is still there
+        let ap_count: i64 = conn.query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0)).unwrap();
+        assert_eq!(ap_count, 1, "existing approval row must survive migration");
+        let ar_count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |r| r.get(0)).unwrap();
+        assert_eq!(ar_count, 1, "existing agent_run row must survive migration");
+        // v5 table exists with expected columns
+        conn.prepare("SELECT id, kind, media, path, created, expires_at, reason, meta FROM pins")
+            .unwrap();
+        // v5 index exists
+        let idx: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pins_expires'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(idx, 1, "idx_pins_expires must exist");
     }
 }
