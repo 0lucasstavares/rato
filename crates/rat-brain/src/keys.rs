@@ -152,11 +152,16 @@ mod tests {
 
     #[test]
     fn missing_key_returns_error() {
-        // Use a distinct provider to avoid keyring conflicts
         let key = env_var_name(&Provider::OpenRouter);
         env::remove_var(key);
+        // The machine keyring may legitimately hold rato/openrouter (it does on
+        // the operator's machine after `rat setup`), so only assert the error
+        // shape when the keyring genuinely lacks the entry.
         let result = get_key(Provider::OpenRouter);
-        // Assert the error is specifically MissingKey, not just any error
-        assert!(matches!(result, Err(LlmError::MissingKey(_))));
+        if key_present(Provider::OpenRouter) {
+            assert!(result.is_ok(), "key present in keyring → get_key must return it");
+        } else {
+            assert!(matches!(result, Err(LlmError::MissingKey(_))));
+        }
     }
 }
