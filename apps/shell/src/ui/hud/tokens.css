@@ -55,19 +55,6 @@
   min-height: 100vh;
 }
 
-/* paper grain — shared grunge overlay (feTurbulence noise) */
-.hud-grunge {
-  position: relative;
-}
-.hud-grunge::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.05;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
 /* paper card: hard shadow, ink border, slight alternating tilt */
 .hud-panel {
   background: var(--hud-panel);
@@ -80,7 +67,17 @@
   rotate: 0.6deg;
 }
 
+/* paper grain — grunge as a background layer (not ::after: .hud-tape owns ::after
+   on the same elements). Opacity is baked into the SVG rect. Declared after
+   .hud-panel so this background-image survives its `background:` shorthand. */
+.hud-grunge {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+}
+
 /* tape strips on two corners of a card */
+.hud-tape {
+  position: relative;
+}
 .hud-tape::before,
 .hud-tape::after {
   content: "";

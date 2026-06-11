@@ -3,7 +3,7 @@
   let { title, children }: { title?: string; children: Snippet } = $props();
 </script>
 
-<div class="hud-panel">
+<div class="hud-panel hud-tape hud-grunge">
   {#if title}
     <div class="hud-title">{title}</div>
   {/if}
@@ -14,6 +14,6 @@
 
 <style>
   .content {
-    padding: 8px;
+    padding: 8px 10px 10px;
   }
 </style>
