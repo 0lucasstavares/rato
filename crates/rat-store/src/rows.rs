@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn embedding_round_trip() {
-        let original: Vec<f32> = vec![1.0, -0.5, 0.0, 3.14159, f32::MAX, f32::MIN_POSITIVE];
+        let original: Vec<f32> = vec![1.0, -0.5, 0.0, std::f32::consts::PI, f32::MAX, f32::MIN_POSITIVE];
         let encoded = encode_embedding(&original);
         assert_eq!(encoded.len(), original.len() * 4);
         let decoded = decode_embedding(&encoded);

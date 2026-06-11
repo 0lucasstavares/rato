@@ -2478,7 +2478,7 @@ mod tests {
 
         // Delete older than t=5000, protecting obs_protected
         let deleted = store
-            .delete_observations_older_than(5_000, &[obs_protected.id.clone()], 100)
+            .delete_observations_older_than(5_000, std::slice::from_ref(&obs_protected.id), 100)
             .await
             .unwrap();
         assert_eq!(deleted, 1); // only obs_old

@@ -416,23 +416,23 @@ mod tests {
     async fn hourly_summarize_writes_memory_and_summary() {
         use rat_brain::backend::{BackendConfig, Provider, make_backend};
 
-        // Clock at DAY_MS + 3600_000 so observations fall within session window
-        let clock: Arc<dyn Clock> = FakeClock::at(DAY_MS + 3600_000);
+        // Clock at DAY_MS + 3_600_000 so observations fall within session window
+        let clock: Arc<dyn Clock> = FakeClock::at(DAY_MS + 3_600_000);
         let (store, _tmp) = make_store(clock.clone()).await;
 
-        // Create a closed session spanning [DAY_MS, DAY_MS + 7200_000]
+        // Create a closed session spanning [DAY_MS, DAY_MS + 7_200_000]
         let session = rat_proto::WorkSession {
             id: "sess1".into(),
             project_id: "proj1".into(),
             started: DAY_MS,
-            last_activity: DAY_MS + 3600_000,
-            ended: Some(DAY_MS + 7200_000),
+            last_activity: DAY_MS + 3_600_000,
+            ended: Some(DAY_MS + 7_200_000),
             commands: 5,
         };
         store.session_open(session).await.unwrap();
-        store.session_close("sess1".into(), DAY_MS + 7200_000).await.unwrap();
+        store.session_close("sess1".into(), DAY_MS + 7_200_000).await.unwrap();
 
-        // Add observations at current clock time (DAY_MS + 3600_000 — within session window)
+        // Add observations at current clock time (DAY_MS + 3_600_000 — within session window)
         store.add_observation(NewObservation {
             kind: "shell_cmd".into(),
             content: "cargo test --all".into(),
