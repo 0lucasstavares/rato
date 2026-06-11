@@ -163,14 +163,14 @@
 
   .card-body {
     font-family: var(--hud-font-body);
-    font-size: 12px;
+    font-size: 14px;
     color: var(--hud-ink);
     line-height: 1.4;
   }
 
   .card-meta {
-    font-family: var(--hud-font-marker);
-    font-size: 10px;
+    font-family: var(--hud-font-data);
+    font-size: 11px;
     color: var(--hud-ink-dim);
     display: flex;
     gap: 4px;

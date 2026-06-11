@@ -207,8 +207,8 @@
     z-index: 3;
   }
   .quick .hint {
-    font-family: var(--hud-font-marker);
-    font-size: 10px;
+    font-family: var(--hud-font-data);
+    font-size: 11px;
     color: var(--hud-ink-dim);
     white-space: nowrap;
   }
@@ -225,8 +225,8 @@
     color: var(--hud-ink);
   }
   .bubble-title {
-    font-family: var(--hud-font-marker);
-    font-size: 11px;
+    font-family: var(--hud-font-body);
+    font-size: 12px;
     padding: 6px 8px 2px;
     color: var(--hud-ink);
     line-height: 1.2;

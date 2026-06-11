@@ -164,7 +164,7 @@
     color: var(--hud-ink);
   }
   .pb-ago {
-    font-family: var(--hud-font-marker);
+    font-family: var(--hud-font-data);
     font-size: 10px;
     flex-shrink: 0;
   }
