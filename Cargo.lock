@@ -983,6 +983,21 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "rat-client",
+ "rat-core",
+ "rat-daemon",
+ "rat-proto",
+ "rat-store",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "rat-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "rat-core",
  "rat-daemon",
  "rat-proto",

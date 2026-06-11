@@ -2,7 +2,7 @@ use std::path::Path;
 
 /// Prints [ok]/[warn]/[fail] lines. Always exits 0 — doctor reports, it does not gate.
 pub async fn doctor(socket: &Path) -> anyhow::Result<()> {
-    match crate::client::Client::connect(socket).await {
+    match rat_client::Client::connect(socket).await {
         Ok(mut c) => match c.status().await {
             Ok(s) => println!(
                 "[ok]   daemon: ratd {} at {} ({} events)",
@@ -31,7 +31,7 @@ pub async fn doctor(socket: &Path) -> anyhow::Result<()> {
         println!("[warn] systemd: unit not installed (run `rat install`)");
     }
 
-    if let Ok(mut c) = crate::client::Client::connect(socket).await {
+    if let Ok(mut c) = rat_client::Client::connect(socket).await {
         if let Ok(m) = c
             .call(rat_proto::methods::MODE_GET, serde_json::Value::Null)
             .await

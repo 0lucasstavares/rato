@@ -1,4 +1,4 @@
-mod client;
+use rat_client as client;
 mod doctor;
 mod install;
 mod shellinit;
