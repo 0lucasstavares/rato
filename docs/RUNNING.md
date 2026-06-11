@@ -74,8 +74,35 @@ Notes:
 | Events/observations | `rat events`, `rat observations [--kind shell_cmd]` |
 | Search memory | `rat search "query"` |
 | Pushbacks | `rat pushbacks` / `rat pushbacks feedback <id> <useful|dismiss|snooze>` |
+| Workbench tasks | `rat task start --project <repo> --title <t> [--adapter fakeagent\|claude-code\|codex]`; `rat task list`; `rat task tail <run_id>` |
+| Merge back | `rat task merge-back <run_id>` → creates an approval; review and approve it |
+| Approvals | `rat approvals`; `rat approvals decide <id> approve\|deny [--note <n>] [--slug <s>]` |
 | Logs | `journalctl --user -u ratd -f` |
 | Stop everything | `systemctl --user stop ratd rato-shell` |
+
+## Workbench (agent tasks + merge-back)
+
+A workbench task runs an agent adapter inside an isolated git worktree (branch `rato/<slug>`
+under `~/.local/share/rato/worktrees/<repo-hash>/<task-id>/`) in a dedicated `tmux -L rato`
+window. Agent commits stay on the `rato/*` branch — the live repo is never touched until you
+approve a merge-back.
+
+```bash
+rat task start --project ~/code/myproj --title "add retry logic"   # default adapter: fakeagent
+rat task list                                                      # running → done
+rat task tail <run_id>                                             # captured agent output
+rat task merge-back <run_id>                                       # → R2 approval (slug = last 6 of id)
+rat approvals                                                      # see it pending
+rat approvals decide <approval_id> approve                         # git merge --no-ff into the live repo
+#   ...or: rat approvals decide <approval_id> deny                 # live repo untouched, branch kept
+```
+
+- **Adapters:** `fakeagent` (deterministic test agent), `claude-code` (`claude` on PATH),
+  `codex` (`codex` on PATH). Real-adapter transcript parsing + interactive panes land in M7.
+- **Merge-back is always R2** (operator approval required) and only merges when fast-forward/clean
+  (`git merge-tree`); conflicts return *needs-manual* and never auto-resolve.
+- **R3 approvals** (none ship in M4) require `--slug <s>` matching the approval's slug.
+- Pending approvals **expire after 60 min** (daemon sweep).
 
 ## Data locations
 

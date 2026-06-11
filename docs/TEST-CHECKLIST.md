@@ -52,7 +52,37 @@ Manual verification checklist per subsystem. Automated coverage: `cargo test --w
 - [ ] ⚙ hourly job embeds new observations (when embeddings available) and summarizes closed
       sessions into `episode_summary` memories with citations
 
-## M4 — Workbench *(pending)*
+## M4 — Workbench
+
+Verified live 2026-06-11 against an isolated daemon (sandbox `XDG_*` dirs) + scratch repo
+`~/rato-scratch-m4`, real `git`/`tmux`. Automated coverage: `cargo test --workspace` (incl.
+`rat-workbench` runner tests + `rat-daemon` rpc tests) green.
+
+- [x] ⚙ `rat task start --project <repo> --title <t> --adapter fakeagent` → returns a `running`
+      AgentRun; a `rato/<slug>` branch + a worktree under `~/.local/share/rato/worktrees/` are created
+- [x] ⚙ run advances `running → done` on its own (daemon 3 s poll sweep + poll-on-read in
+      `workbench.runs`); the agent's commit lands on the `rato/*` branch, **NOT** on the live repo
+      (live `HEAD` unchanged pre-merge)
+- [x] ⚙ `rat task tail <run_id>` returns the captured window output
+- [x] ⚙ `rat task merge-back <run_id>` → creates a **R2** `merge_back` approval (slug = last 6 of id)
+      with diffstat in the payload; oversized (>32 KB) diffs go to a `blobs` row referenced by id
+- [x] ⚙ `rat approvals` lists it pending; `rat approvals decide <id> approve` →
+      `git merge --no-ff` lands in the **live** repo (new merge commit, agent file present),
+      `agent_runs.status = merged`, and `approvals.execution` records commit sha + exit 0 + verified_target
+- [x] ⚙ **denial invariant:** second run → `rat approvals decide <id> deny` → live repo
+      `git rev-parse HEAD` and `git status --porcelain` **byte-identical** before/after;
+      `rato/*` branch preserved (also asserted with a real diff in the `rat-workbench` deny test)
+- [x] ⚙ not-fast-mergeable branch → `execute_merge` returns `NeedsManual` (no auto-resolve);
+      conflicting-branch test in `rat-workbench`
+- [x] ⚙ R3 slug gate exists: `approvals.decide` on an R3 approval requires a matching `--slug`
+      (no R3 flows ship in M4; gate unit-tested in `rat-daemon` rpc tests)
+- [x] ⚙ pending R2 approvals auto-`expired` after 60 min (daemon 60 s `expire_approvals` sweep)
+- [ ] 👁 dashboard **Workbench** tab: runs table (adapter/title/status/started/diffstat), expandable
+      2 s tail poll, "Merge back" button on `done` runs creates the approval
+- [ ] 👁 dashboard **Approvals** tab: risk-striped cards (R1 green / R2 amber / R3 red), diffstat block,
+      expiry countdown, Approve/Deny; R3 card requires typing the slug to arm Approve; audit list below
+- [ ] 👁 avatar grip shows an amber `APR` chip while approvals are pending
+
 ## M5 — Eyes / screen *(pending)*
 ## M6 — Voice *(pending)*
 ## M7 — Polish *(pending)*
