@@ -43,9 +43,12 @@ for the PS2 chunk. Camera head-on at chest height.
 ## 2. Window + positioning
 
 - Avatar window: **180×240** (tauri.conf.json; matching fallback in main.rs).
-- main.rs: `y = monitor_y + screen_height − window_height` (the old `− margin − 48` is
-  removed); `x = monitor_x + 16`. Flush with the screen bottom so the crop line sits on the
-  screen edge.
+- Positioning is **remembered, not fixed** (operator decision 2026-06-11): on every window
+  move, the shell persists `{x, y}` to `~/.local/share/rato/avatar-pos.json`. On startup it
+  restores that position if the file exists and the point falls within a connected monitor;
+  otherwise (first launch / monitor changed) it defaults to flush bottom-left:
+  `y = monitor_y + screen_height − window_height`, `x = monitor_x + 16` (the old
+  `− margin − 48` is removed). Flush-bottom default keeps the crop line on the screen edge.
 - Grip bar (drag handle + LED chips) becomes a slim strip at the very top of the window.
 - Avatar.svelte layout: canvas anchored to window bottom, no dead space below.
 
@@ -111,7 +114,8 @@ orange accent, white die-cut border.
 
 ## 6. Acceptance
 
-1. Avatar window 180×240, flush with screen bottom-left (16px left margin, 0 bottom).
+1. Avatar window 180×240; first launch flush with screen bottom-left (16px left margin,
+   0 bottom); after dragging, relaunch restores the dragged position.
 2. Rat reads as a front-facing biped bust with hands; idle + away + blink + flourish work.
 3. Dashboard and avatar overlays show the paper/sticker/tape language; no navy, no
    scanlines; fonts load (with working fallbacks).

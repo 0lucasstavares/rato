@@ -921,25 +921,87 @@ git add -A && git commit -m "feat(shell): biped torso-up rat with hands — wave
 
 - [ ] **Step 1: tauri.conf.json — avatar window entry: `"width": 320, "height": 380` → `"width": 180, "height": 240`**
 
-- [ ] **Step 2: main.rs — replace the positioning block:**
+- [ ] **Step 2: main.rs — remembered position (operator decision: not fixed)**
+
+Add above `fn main()`:
 
 ```rust
-            // avatar: bottom-left, flush with the screen bottom (the rat is a
-            // torso-up bust; the screen edge is his crop line — spec 2026-06-11)
-            if let Some(avatar) = app.get_webview_window("avatar") {
-                if let Ok(Some(monitor)) = avatar.primary_monitor() {
-                    let size = monitor.size();
-                    let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
-                        width: 180,
-                        height: 240,
-                    });
-                    let x = monitor.position().x + 16;
-                    let y = monitor.position().y + size.height as i32 - outer.height as i32;
-                    let _ = avatar.set_position(PhysicalPosition { x, y });
-                }
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct AvatarPos {
+    x: i32,
+    y: i32,
+}
+
+fn pos_file() -> std::path::PathBuf {
+    rat_core::paths::data_dir().join("avatar-pos.json")
+}
+
+fn load_pos() -> Option<AvatarPos> {
+    serde_json::from_str(&std::fs::read_to_string(pos_file()).ok()?).ok()
+}
+
+fn save_pos(p: AvatarPos) {
+    let path = pos_file();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string(&p) {
+        let _ = std::fs::write(path, json);
+    }
+}
 ```
 
-(The trailing dashboard close-to-hide handler stays exactly as is.)
+Replace the avatar positioning block inside `setup` with:
+
+```rust
+            // avatar: restore the last dragged position; default = flush bottom-left
+            // (torso-up bust — the screen edge is his crop line). spec 2026-06-11
+            if let Some(avatar) = app.get_webview_window("avatar") {
+                let saved = load_pos().filter(|p| {
+                    avatar
+                        .available_monitors()
+                        .map(|ms| {
+                            ms.iter().any(|m| {
+                                let mp = m.position();
+                                let ms_ = m.size();
+                                p.x >= mp.x
+                                    && p.x < mp.x + ms_.width as i32
+                                    && p.y >= mp.y
+                                    && p.y < mp.y + ms_.height as i32
+                            })
+                        })
+                        .unwrap_or(false)
+                });
+                let pos = saved.or_else(|| {
+                    avatar.primary_monitor().ok().flatten().map(|monitor| {
+                        let size = monitor.size();
+                        let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
+                            width: 180,
+                            height: 240,
+                        });
+                        AvatarPos {
+                            x: monitor.position().x + 16,
+                            y: monitor.position().y + size.height as i32 - outer.height as i32,
+                        }
+                    })
+                });
+                if let Some(p) = pos {
+                    let _ = avatar.set_position(PhysicalPosition { x: p.x, y: p.y });
+                }
+                // persist drags so the next launch reopens where the operator left him
+                avatar.on_window_event(|event| {
+                    if let tauri::WindowEvent::Moved(p) = event {
+                        save_pos(AvatarPos { x: p.x, y: p.y });
+                    }
+                });
+            }
+```
+
+(The trailing dashboard close-to-hide handler stays exactly as is. `serde` with derive is
+already a dependency of rato-shell. The Moved event also fires for the initial
+`set_position` — harmless, it just writes the default once.)
 
 - [ ] **Step 3: Regenerate the icon (THUG2 sticker style):**
 
@@ -1004,7 +1066,10 @@ sleep 3 && pgrep -x rato-shell && echo RUNNING
 - [ ] **Step 2: Programmatic checks**
 
 ```bash
+rm -f ~/.local/share/rato/avatar-pos.json         # force first-launch default for the check
 DISPLAY=:0 xwininfo -root -tree | grep '"rato"'   # expect 180x240 at x=16, y=screenH-240
+# then drag-test persistence: move the window, pkill -x rato-shell, relaunch, confirm it
+# reopens at the dragged spot and avatar-pos.json contains that {x,y}
 DISPLAY=:0 xprop -id $(DISPLAY=:0 xwininfo -root -tree | grep '"rato"' | grep -o '0x[0-9a-f]*' | head -1) _NET_WM_STATE | grep ABOVE
 ```
 
