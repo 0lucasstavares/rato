@@ -2,3 +2,7 @@
 
 # Session handoff (local only, not versioned)
 handoff.md
+
+# API keys — never version (keep the folder via .gitkeep)
+/keys/*
+!/keys/.gitkeep
