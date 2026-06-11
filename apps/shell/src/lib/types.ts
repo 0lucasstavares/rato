@@ -1,0 +1,53 @@
+// Mirrors of rat-proto types (keep in sync with crates/rat-proto/src/lib.rs)
+
+export interface StatusResult {
+  version: string;
+  proto_version: number;
+  uptime_ms: number;
+  event_count: number;
+  db_path: string;
+}
+
+export interface RatEvent {
+  id: string;
+  ts: number;
+  kind: string;
+  source: string;
+  project_id: string | null;
+  session_id: string | null;
+  payload: unknown;
+  lang: string | null;
+}
+
+export interface Project {
+  id: string;
+  root_path: string;
+  name: string;
+  first_seen: number;
+  last_seen: number;
+}
+
+export interface WorkSession {
+  id: string;
+  project_id: string;
+  started: number;
+  last_activity: number;
+  ended: number | null;
+  commands: number;
+}
+
+export interface Observation {
+  id: string;
+  event_id: string | null;
+  ts: number;
+  kind: string;
+  project_id: string | null;
+  content: string;
+  meta: Record<string, unknown>;
+}
+
+export interface ModeState {
+  mode: "active" | "away" | string;
+  since_ms: number;
+  idle_ms: number | null;
+}

@@ -1,0 +1,127 @@
+/* HUD-PS2 design system — ARCHITECTURE.md §13 */
+:root {
+  --hud-bg: #0b0e14;
+  --hud-panel: #141a24;
+  --hud-panel-raised: #1c2433;
+  --hud-line: #3a4860;
+  --hud-line-light: #4d5f7d;
+  --hud-line-dark: #232c3d;
+  --hud-text: #c8d4e0;
+  --hud-text-dim: #7d8da1;
+  --hud-accent: #7cff6b;
+  --hud-warn: #ffb02e;
+  --hud-danger: #ff5c5c;
+  --hud-info: #5cc8ff;
+
+  --hud-font-head: "Departure Mono", "Press Start 2P", "IBM Plex Mono", "JetBrains Mono", monospace;
+  --hud-font-body: "IBM Plex Mono", "JetBrains Mono", "Fira Mono", monospace;
+}
+
+.hud-body {
+  background: var(--hud-bg);
+  color: var(--hud-text);
+  font-family: var(--hud-font-body);
+  font-size: 13px;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* chunky square panel with bevel */
+.hud-panel {
+  background: var(--hud-panel);
+  border: 2px solid var(--hud-line);
+  border-top-color: var(--hud-line-light);
+  border-left-color: var(--hud-line-light);
+  border-bottom-color: var(--hud-line-dark);
+  border-right-color: var(--hud-line-dark);
+  position: relative;
+}
+
+/* 4-bit ordered-dither overlay, pure CSS */
+.hud-dither::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  background-image: radial-gradient(var(--hud-text) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+.hud-scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 3px
+  );
+}
+
+.hud-title {
+  font-family: var(--hud-font-head);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: var(--hud-panel-raised);
+  border-bottom: 2px solid var(--hud-line);
+  padding: 4px 8px;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--hud-font-head);
+  font-size: 9px;
+  letter-spacing: 1px;
+  padding: 2px 6px;
+  border: 1px solid var(--hud-line);
+  background: var(--hud-panel-raised);
+  text-transform: uppercase;
+}
+
+.hud-chip .dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+}
+
+.hud-chip.on .dot { background: var(--hud-accent); box-shadow: 0 0 4px var(--hud-accent); }
+.hud-chip.off .dot { background: var(--hud-line); }
+.hud-chip.warn .dot { background: var(--hud-warn); box-shadow: 0 0 4px var(--hud-warn); }
+.hud-chip.err .dot { background: var(--hud-danger); box-shadow: 0 0 4px var(--hud-danger); }
+
+button.hud-btn {
+  font-family: var(--hud-font-head);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--hud-text);
+  background: var(--hud-panel-raised);
+  border: 2px solid var(--hud-line);
+  border-top-color: var(--hud-line-light);
+  border-left-color: var(--hud-line-light);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button.hud-btn:active {
+  border-top-color: var(--hud-line-dark);
+  border-left-color: var(--hud-line-dark);
+  border-bottom-color: var(--hud-line-light);
+  border-right-color: var(--hud-line-light);
+  transform: translateY(1px);
+}
+
+button.hud-btn:hover { border-color: var(--hud-accent); color: var(--hud-accent); }
+
+/* stepped motion, retro feel */
+@keyframes hud-blink-steps {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
+}
