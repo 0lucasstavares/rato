@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
 
     let llm_status = Arc::new(LlmStatusState {
         provider: config.llm.provider.clone(),
-        embedding_enabled: embedder.is_some(),
+        embedding_enabled: std::sync::atomic::AtomicBool::new(embedder.is_some()),
         critic_enabled,
         last_error: std::sync::Mutex::new(None),
         openai_key: keys::key_present(Provider::OpenAi),
@@ -163,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
     if critic_enabled {
         let backend_box = backend.unwrap(); // safe since critic_enabled requires it
         let memory_searcher: Option<Box<dyn rat_brain::critic::MemorySearcher>> =
-            Some(Box::new(DaemonMemorySearcher { embedder: embedder.clone() }));
+            Some(Box::new(DaemonMemorySearcher { embedder: embedder.clone(), llm_status: llm_status.clone() }));
         let critic = Arc::new(Critic::new(
             store.clone(),
             backend_box,
@@ -248,10 +248,14 @@ async fn main() -> anyhow::Result<()> {
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     interval.tick().await;
+                    // embedding may have been disabled at runtime (4xx from the API)
+                    let embedder_now = embedder_h
+                        .as_ref()
+                        .filter(|_| llm_status_h.embedding_enabled.load(std::sync::atomic::Ordering::Relaxed));
                     if let Err(e) = rat_memory::jobs::hourly(
                         &store_h,
                         hourly_backend.as_deref(),
-                        embedder_h.as_ref(),
+                        embedder_now,
                         &clock_h,
                     )
                     .await

@@ -18,7 +18,7 @@ const VERDICT_SCHEMA: &str = r#"{
     "type": "object",
     "properties": {
         "pushback": {
-            "oneOf": [
+            "anyOf": [
                 { "type": "null" },
                 {
                     "type": "object",

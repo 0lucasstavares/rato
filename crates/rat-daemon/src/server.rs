@@ -22,7 +22,9 @@ use crate::mode::ModeManager;
 /// Shared LLM/critic status, readable via the `llm.status` RPC method.
 pub struct LlmStatusState {
     pub provider: String,
-    pub embedding_enabled: bool,
+    /// Atomic: flipped to false at runtime when the account rejects the
+    /// embedding model (4xx) — retrieval then runs FTS-only per spec.
+    pub embedding_enabled: std::sync::atomic::AtomicBool,
     pub critic_enabled: bool,
     pub last_error: Mutex<Option<String>>,
     pub openai_key: bool,
@@ -35,7 +37,7 @@ impl LlmStatusState {
     pub fn disabled() -> Arc<Self> {
         Arc::new(Self {
             provider: "openai".to_string(),
-            embedding_enabled: false,
+            embedding_enabled: std::sync::atomic::AtomicBool::new(false),
             critic_enabled: false,
             last_error: Mutex::new(None),
             openai_key: false,
@@ -344,7 +346,7 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                     anthropic: ctx.llm_status.anthropic_key,
                     openrouter: ctx.llm_status.openrouter_key,
                 },
-                embedding_enabled: ctx.llm_status.embedding_enabled,
+                embedding_enabled: ctx.llm_status.embedding_enabled.load(std::sync::atomic::Ordering::Relaxed),
                 critic_enabled: ctx.llm_status.critic_enabled,
                 last_error,
             };
