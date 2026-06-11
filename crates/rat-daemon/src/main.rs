@@ -338,6 +338,30 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Agent-run poll sweep: advance running → done/failed every 3s
+    {
+        let runner_poll = task_runner.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let runs = match runner_poll.store.recent_agent_runs(100).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("poll sweep: recent_agent_runs failed: {e}");
+                        continue;
+                    }
+                };
+                for run in runs.into_iter().filter(|r| r.status == "running") {
+                    if let Err(e) = runner_poll.poll(&run.id).await {
+                        tracing::debug!("poll sweep: poll({}) failed: {e}", run.id);
+                    }
+                }
+            }
+        });
+    }
+
     let ctx = Arc::new(ServerCtx {
         store,
         ingest,

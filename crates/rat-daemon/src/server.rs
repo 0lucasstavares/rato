@@ -401,6 +401,16 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 }
             };
             let n = params.n.unwrap_or(20);
+            // Poll-on-read: advance any running runs before listing so the
+            // caller sees immediately-accurate status without waiting for the
+            // 3s background sweep.
+            if let Ok(running) = ctx.store.recent_agent_runs(100).await {
+                for run in running.into_iter().filter(|r| r.status == "running") {
+                    if let Err(e) = ctx.task_runner.poll(&run.id).await {
+                        tracing::debug!("workbench.runs poll({}): {e}", run.id);
+                    }
+                }
+            }
             match ctx.store.recent_agent_runs(n).await {
                 Ok(runs) => {
                     let dtos: Vec<AgentRunDto> = runs.into_iter().map(agent_run_to_dto).collect();

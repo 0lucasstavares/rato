@@ -556,3 +556,102 @@ async fn workbench_merge_back_rpc_unknown_run_returns_error() {
     assert!(resp.error.is_some(), "unknown run_id must return an error");
     assert_eq!(resp.error.unwrap().code, errcodes::INVALID_REQUEST);
 }
+
+// ---------------------------------------------------------------------------
+// workbench.runs poll-on-read integration test
+//
+// Guards: skips when git or tmux not found on PATH.
+// Starts a real fakeagent task via workbench.start, then retries
+// workbench.runs until the run's status becomes "done". This proves that
+// poll-on-read (inside the WORKBENCH_RUNS arm) advances running → done
+// without waiting for the 3s background sweep.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn workbench_runs_poll_on_read_advances_to_done() {
+    if !has_binary_rpc("git") || !has_binary_rpc("tmux") {
+        eprintln!("skipping workbench_runs_poll_on_read_advances_to_done: git or tmux not found");
+        return;
+    }
+
+    // Unique tmux socket so this test does not affect any running tmux server.
+    let tmux_socket = unique_tmux_socket();
+    let tmux = Tmux::new(tmux_socket.clone());
+    struct TmuxGuard(Tmux);
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill_server();
+        }
+    }
+    let _tmux_guard = TmuxGuard(tmux.clone());
+
+    // Set up a real git repo with an initial commit.
+    let tmp_repo = tempfile::TempDir::new().unwrap();
+    let repo = tmp_repo.path().to_path_buf();
+    git_rpc(&repo, &["init", "-b", "main"]);
+    git_rpc(&repo, &["config", "user.email", "test@test.local"]);
+    git_rpc(&repo, &["config", "user.name", "Test"]);
+    std::fs::write(repo.join("README.md"), "# poll-on-read test\n").unwrap();
+    git_rpc(&repo, &["add", "README.md"]);
+    git_rpc(&repo, &["commit", "-m", "init"]);
+
+    // Open store and register the project.
+    let tmp_store = tempfile::TempDir::new().unwrap();
+    let clock = FakeClock::at(6_000_000);
+    let store = Store::open(&tmp_store.path().join("test.db"), clock.clone()).unwrap();
+    let project = store
+        .upsert_project(repo.display().to_string(), "poll-on-read-test".into())
+        .await
+        .expect("upsert project");
+
+    // Start the daemon server with the unique tmux socket.
+    let (_tmp_srv, socket) =
+        start_with_unique_socket(&tmux_socket, store.clone(), clock.clone()).await;
+
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+
+    // Start a fakeagent run via RPC.
+    let start_resp = c
+        .send(json!({
+            "id": 2,
+            "method": "workbench.start",
+            "params": {
+                "project_id": project.id,
+                "title": "poll-on-read task",
+                "adapter": "fakeagent"
+            }
+        }))
+        .await;
+    assert!(start_resp.error.is_none(), "workbench.start must succeed: {:?}", start_resp.error);
+    let run_id = start_resp.result.unwrap()["id"].as_str().unwrap().to_string();
+    assert!(!run_id.is_empty());
+
+    // Retry workbench.runs until the run's status becomes "done" (or we time out).
+    // Each call triggers poll-on-read which calls TaskRunner::poll internally.
+    let mut final_status = String::new();
+    for req_id in (3u32..).take(40) {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let resp = c
+            .send(json!({
+                "id": req_id,
+                "method": "workbench.runs",
+                "params": {"n": 10}
+            }))
+            .await;
+        assert!(resp.error.is_none(), "workbench.runs must not error: {:?}", resp.error);
+        let runs = resp.result.unwrap();
+        if let Some(run) = runs.as_array().unwrap().iter().find(|r| r["id"] == run_id) {
+            let status = run["status"].as_str().unwrap_or("").to_string();
+            if status == "done" || status == "failed" {
+                final_status = status;
+                break;
+            }
+        }
+    }
+
+    assert_eq!(
+        final_status, "done",
+        "run {run_id} should reach status 'done' via poll-on-read, got: '{final_status}'"
+    );
+}
