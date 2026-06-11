@@ -9,6 +9,10 @@ pub mod methods {
     pub const STATUS: &str = "status";
     pub const EVENTS_APPEND: &str = "events.append";
     pub const EVENTS_RECENT: &str = "events.recent";
+    pub const OBSERVATIONS_RECENT: &str = "observations.recent";
+    pub const PROJECTS_LIST: &str = "projects.list";
+    pub const SESSIONS_RECENT: &str = "sessions.recent";
+    pub const MODE_GET: &str = "mode.get";
 }
 
 pub mod errcodes {
@@ -115,10 +119,82 @@ impl Default for RecentParams {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Project {
+    pub id: String,
+    pub root_path: String,
+    pub name: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkSession {
+    pub id: String,
+    pub project_id: String,
+    pub started: i64,
+    pub last_activity: i64,
+    pub ended: Option<i64>,
+    pub commands: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Observation {
+    pub id: String,
+    pub event_id: Option<String>,
+    pub ts: i64,
+    pub kind: String,
+    pub project_id: Option<String>,
+    pub content: String,
+    pub meta: Value,
+}
+
+/// Client/deriver-supplied half of an observation; the store assigns `id` and `ts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct NewObservation {
+    #[serde(default)]
+    pub event_id: Option<String>,
+    pub kind: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    pub content: String,
+    #[serde(default)]
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModeState {
+    /// "active" | "away"
+    pub mode: String,
+    pub since_ms: i64,
+    pub idle_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObsRecentParams {
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+impl Default for ObsRecentParams {
+    fn default() -> Self {
+        Self { limit: default_limit(), kind: None }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn obs_recent_params_defaults() {
+        let p: ObsRecentParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.limit, 50);
+        assert_eq!(p.kind, None);
+    }
 
     #[test]
     fn request_round_trips_and_defaults_params() {
