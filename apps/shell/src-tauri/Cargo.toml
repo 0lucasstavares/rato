@@ -16,7 +16,9 @@ rat-core = { path = "../../../crates/rat-core" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = [] }
+# custom-protocol: serve embedded dist/ assets (we build with plain cargo, not the tauri CLI,
+# so the feature must be on by default or the app tries to load the vite dev server)
+tauri = { version = "2", features = ["custom-protocol"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
