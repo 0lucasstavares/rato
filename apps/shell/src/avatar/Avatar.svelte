@@ -4,7 +4,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import StatusChip from "../ui/hud/StatusChip.svelte";
   import { poll, rpc } from "../lib/rpc";
-  import type { ModeState, PushbackDto, StatusResult } from "../lib/types";
+  import type { ApprovalDto, ModeState, PushbackDto, StatusResult } from "../lib/types";
   import { mountRat, type Rat3D } from "./rat3d";
 
   let canvas: HTMLCanvasElement;
@@ -12,6 +12,7 @@
 
   let net = $state<"on" | "err">("err");
   let mode = $state<ModeState>({ mode: "active", since_ms: 0, idle_ms: null });
+  let pendingApprovals = $state(0);
   let showQuick = $state(false);
   let stopPoll: (() => void) | null = null;
 
@@ -66,6 +67,14 @@
             showBubble(newest);
           }
         }
+
+        // Approvals pending count for APR chip
+        try {
+          const approvals = await rpc<ApprovalDto[]>("approvals.pending");
+          pendingApprovals = approvals.length;
+        } catch {
+          pendingApprovals = 0;
+        }
       } catch {
         net = "err";
       }
@@ -111,6 +120,9 @@
     <StatusChip label="MIC" state="off" />
     <StatusChip label="CLP" state={net === "on" ? "on" : "off"} />
     <StatusChip label="NET" state={net === "on" ? "on" : "err"} />
+    {#if pendingApprovals > 0}
+      <StatusChip label="APR" state="warn" />
+    {/if}
   </div>
 
   <canvas

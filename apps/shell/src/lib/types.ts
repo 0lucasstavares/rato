@@ -52,6 +52,48 @@ export interface ModeState {
   idle_ms: number | null;
 }
 
+/** Wire DTO mirroring rat-proto AgentRunDto / rat_store::rows::AgentRun */
+export interface AgentRunDto {
+  id: string;
+  adapter: string;
+  task_title: string;
+  project_id: string;
+  worktree_path: string;
+  branch: string;
+  tmux_target: string | null;
+  mode: string;
+  /** "running" | "done" | "failed" | "merged" */
+  status: string;
+  tokens: unknown;
+  cost_usd: number;
+  started: number;
+  ended: number | null;
+  result_summary: string | null;
+  diffstat: unknown | null;
+}
+
+/** Wire DTO mirroring rat-proto ApprovalDto / rat_store::rows::Approval */
+export interface ApprovalDto {
+  id: string;
+  created: number;
+  kind: string;
+  risk: number;
+  title: string;
+  reason: string;
+  cwd: string | null;
+  target: string | null;
+  agent_identity: string;
+  payload: unknown;
+  expected_impact: unknown;
+  expires_at: number;
+  /** "pending" | "approved" | "denied" | "expired" | "cancelled" */
+  status: string;
+  decided_at: number | null;
+  decided_via: string | null;
+  decision_note: string | null;
+  execution: unknown | null;
+}
+
 /** Wire DTO mirroring rat-proto PushbackDto / rat_store::rows::Pushback */
 export interface PushbackDto {
   id: string;
