@@ -2014,9 +2014,15 @@ name = "rat-workbench"
 version = "0.1.0"
 dependencies = [
  "rat-core",
+ "rat-policy",
+ "rat-store",
+ "regex",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

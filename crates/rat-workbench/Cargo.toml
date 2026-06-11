@@ -5,9 +5,16 @@ edition.workspace = true
 
 [dependencies]
 rat-core = { path = "../rat-core" }
+rat-store = { path = "../rat-store" }
+rat-policy = { path = "../rat-policy" }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true }
