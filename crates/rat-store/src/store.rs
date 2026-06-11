@@ -67,6 +67,19 @@ enum Cmd {
     },
     ClosedSessionsWithoutSummary { limit: u32, reply: Reply<Vec<WorkSession>> },
     SetSessionSummary { id: String, summary: String, reply: Reply<()> },
+    ObservationsBetween {
+        project_id: String,
+        from_ms: i64,
+        to_ms: i64,
+        limit: u32,
+        reply: Reply<Vec<Observation>>,
+    },
+    DeleteObservationsOlderThan {
+        cutoff_ms: i64,
+        protected_ids: Vec<String>,
+        max_rows: u32,
+        reply: Reply<u32>,
+    },
 }
 
 /// Cloneable handle to the single-writer SQLite actor thread.
@@ -409,6 +422,44 @@ impl Store {
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
+
+    pub async fn observations_between(
+        &self,
+        project_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Observation>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ObservationsBetween {
+                project_id: project_id.to_string(),
+                from_ms,
+                to_ms,
+                limit,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn delete_observations_older_than(
+        &self,
+        cutoff_ms: i64,
+        protected_ids: &[String],
+        max_rows: u32,
+    ) -> Result<u32, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::DeleteObservationsOlderThan {
+                cutoff_ms,
+                protected_ids: protected_ids.to_vec(),
+                max_rows,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
 }
 
 fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) {
@@ -516,6 +567,12 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             }
             Cmd::SetSessionSummary { id, summary, reply } => {
                 let _ = reply.send(do_set_session_summary(&conn, &id, &summary));
+            }
+            Cmd::ObservationsBetween { project_id, from_ms, to_ms, limit, reply } => {
+                let _ = reply.send(do_observations_between(&conn, &project_id, from_ms, to_ms, limit));
+            }
+            Cmd::DeleteObservationsOlderThan { cutoff_ms, protected_ids, max_rows, reply } => {
+                let _ = reply.send(do_delete_observations_older_than(&conn, cutoff_ms, &protected_ids, max_rows));
             }
         }
     }
@@ -1265,6 +1322,113 @@ fn do_set_session_summary(conn: &Connection, id: &str, summary: &str) -> Result<
     Ok(())
 }
 
+fn do_observations_between(
+    conn: &Connection,
+    project_id: &str,
+    from_ms: i64,
+    to_ms: i64,
+    limit: u32,
+) -> Result<Vec<Observation>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, event_id, ts, kind, project_id, content, meta
+         FROM observations
+         WHERE project_id = ?1 AND ts >= ?2 AND ts <= ?3
+         ORDER BY ts ASC
+         LIMIT ?4",
+    )?;
+    let rows = stmt.query_map(params![project_id, from_ms, to_ms, limit], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, event_id, ts, kind, project_id, content, meta) = row?;
+        out.push(Observation {
+            id,
+            event_id,
+            ts,
+            kind,
+            project_id,
+            content,
+            meta: serde_json::from_str(&meta)?,
+        });
+    }
+    Ok(out)
+}
+
+fn do_delete_observations_older_than(
+    conn: &Connection,
+    cutoff_ms: i64,
+    protected_ids: &[String],
+    max_rows: u32,
+) -> Result<u32, StoreError> {
+    // Build a subquery to exclude protected ids
+    let placeholders = if protected_ids.is_empty() {
+        String::new()
+    } else {
+        let ph = protected_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("AND id NOT IN ({})", ph)
+    };
+
+    let select_sql = format!(
+        "SELECT id FROM observations WHERE ts < ?1 {} LIMIT ?2",
+        placeholders
+    );
+    let mut select_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+        Box::new(cutoff_ms),
+        Box::new(max_rows),
+    ];
+    for id in protected_ids {
+        select_params.push(Box::new(id.clone()));
+    }
+
+    let mut stmt = conn.prepare(&select_sql)?;
+    let ids_to_delete: Vec<String> = stmt
+        .query_map(
+            rusqlite::params_from_iter(select_params.iter().map(|p| p.as_ref())),
+            |r| r.get(0),
+        )?
+        .collect::<Result<_, _>>()?;
+
+    if ids_to_delete.is_empty() {
+        return Ok(0);
+    }
+
+    let count = ids_to_delete.len() as u32;
+
+    // Delete vec_observations first
+    for id in &ids_to_delete {
+        conn.execute("DELETE FROM vec_observations WHERE obs_id = ?1", params![id])?;
+    }
+
+    // Delete the observations (FTS goes via trigger)
+    let del_phs = ids_to_delete
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let del_sql = format!("DELETE FROM observations WHERE id IN ({})", del_phs);
+    conn.execute(
+        &del_sql,
+        rusqlite::params_from_iter(ids_to_delete.iter()),
+    )?;
+
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1646,5 +1810,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(disc_id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn observations_between_returns_time_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // obs at t=1000
+        store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "cmd at 1000".into(),
+            project_id: Some("p1".into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        clock.advance(2_000); // t=3000
+        store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "cmd at 3000".into(),
+            project_id: Some("p1".into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        clock.advance(2_000); // t=5000
+        store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "cmd at 5000".into(),
+            project_id: Some("p1".into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        // Between 500 and 4000 → should return 2
+        let result = store.observations_between("p1", 500, 4000, 10).await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].content, "cmd at 1000");
+        assert_eq!(result[1].content, "cmd at 3000");
+
+        // Different project → none
+        let result2 = store.observations_between("other", 0, 10_000, 10).await.unwrap();
+        assert!(result2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_observations_older_than_respects_protected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let obs_old = store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "old cmd".into(),
+            ..Default::default()
+        }).await.unwrap();
+
+        let obs_protected = store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "protected old cmd".into(),
+            ..Default::default()
+        }).await.unwrap();
+
+        clock.advance(10_000);
+        let obs_new = store.add_observation(rat_proto::NewObservation {
+            kind: "shell_cmd".into(),
+            content: "new cmd".into(),
+            ..Default::default()
+        }).await.unwrap();
+
+        // Store an embedding for obs_old to verify vec cleanup
+        store.set_observation_embedding(obs_old.id.clone(), vec![1.0, 0.0]).await.unwrap();
+
+        // Delete older than t=5000, protecting obs_protected
+        let deleted = store
+            .delete_observations_older_than(5_000, &[obs_protected.id.clone()], 100)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1); // only obs_old
+
+        let remaining = store.recent_observations(10, None).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+        let ids: Vec<&str> = remaining.iter().map(|o| o.id.as_str()).collect();
+        assert!(ids.contains(&obs_protected.id.as_str()));
+        assert!(ids.contains(&obs_new.id.as_str()));
+
+        // vec_observations row should be gone
+        let embs = store.all_observation_embeddings(10).await.unwrap();
+        assert!(embs.is_empty());
     }
 }
