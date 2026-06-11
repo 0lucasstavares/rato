@@ -79,8 +79,19 @@ pub async fn search(
         .unwrap_or_default();
 
     // --- Vector ---
-    let (vec_obs, vec_mem) = if let Some(embedder) = embedder {
-        let query_vecs = embedder.embed(std::slice::from_ref(&params.query)).await.map_err(crate::MemoryError::Embed)?;
+    // embedding failure (key restriction, network, quota) degrades to FTS-only —
+    // hybrid retrieval is an enhancement, never a precondition
+    let query_embedding = match embedder {
+        Some(e) => match e.embed(std::slice::from_ref(&params.query)).await {
+            Ok(v) => Some(v),
+            Err(err) => {
+                tracing::warn!("query embedding failed, FTS-only: {err}");
+                None
+            }
+        },
+        None => None,
+    };
+    let (vec_obs, vec_mem) = if let Some(query_vecs) = &query_embedding {
         let query_vec = &query_vecs[0];
 
         // Observations
