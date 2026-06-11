@@ -33,8 +33,8 @@ impl ProcWatcher {
     pub fn observe(&mut self, current: &HashMap<u32, String>, now: i64) -> Vec<NewEvent> {
         let mut events = Vec::new();
         for (&pid, comm) in current {
-            if !self.tracked.contains_key(&pid) {
-                self.tracked.insert(pid, Tracked { comm: comm.clone(), since_ms: now });
+            if let std::collections::hash_map::Entry::Vacant(slot) = self.tracked.entry(pid) {
+                slot.insert(Tracked { comm: comm.clone(), since_ms: now });
                 events.push(NewEvent {
                     kind: "proc_started".into(),
                     source: "proc".into(),

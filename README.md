@@ -13,6 +13,14 @@ Single-user, local-first Linux developer companion. See `docs/ARCHITECTURE.md`.
     ./target/release/rat install
     systemctl --user status ratd
 
+## Shell hooks (command tracking)
+
+Add to `~/.bashrc` (or `~/.zshrc` with `zsh`):
+
+    eval "$(~/rato/target/release/rat shell-init bash)"
+
+or simply `source ~/rato/packaging/shell/rat-init.sh`.
+
 ## Dev
 
     cargo test --workspace
