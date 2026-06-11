@@ -4,7 +4,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import StatusChip from "../ui/hud/StatusChip.svelte";
   import { poll, rpc } from "../lib/rpc";
-  import type { ModeState, StatusResult } from "../lib/types";
+  import type { ModeState, PushbackDto, StatusResult } from "../lib/types";
   import { mountRat, type Rat3D } from "./rat3d";
 
   let canvas: HTMLCanvasElement;
@@ -15,6 +15,40 @@
   let showQuick = $state(false);
   let stopPoll: (() => void) | null = null;
 
+  // Pushback bubble state
+  let bubble = $state<PushbackDto | null>(null);
+  let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Module-level last-seen id (persists across re-renders but not page reloads)
+  let lastSeenId = "";
+
+  function clearBubbleTimer() {
+    if (bubbleTimer !== null) {
+      clearTimeout(bubbleTimer);
+      bubbleTimer = null;
+    }
+  }
+
+  function showBubble(p: PushbackDto) {
+    bubble = p;
+    lastSeenId = p.id;
+    clearBubbleTimer();
+    bubbleTimer = setTimeout(() => {
+      bubble = null;
+      bubbleTimer = null;
+    }, 30_000);
+  }
+
+  function hideBubble() {
+    bubble = null;
+    clearBubbleTimer();
+  }
+
+  async function bubbleFeedback(id: string, verdict: string) {
+    hideBubble();
+    await rpc("pushbacks.feedback", { id, verdict });
+  }
+
   onMount(() => {
     rat = mountRat(canvas);
     stopPoll = poll(async () => {
@@ -23,6 +57,15 @@
         net = "on";
         mode = await rpc<ModeState>("mode.get");
         rat?.setMode(mode.mode === "away" ? "away" : "active");
+
+        // Pushback bubble check
+        const pushbacks = await rpc<PushbackDto[]>("pushbacks.recent", { n: 1 });
+        if (pushbacks.length > 0) {
+          const newest = pushbacks[0];
+          if (newest.status === "shown" && newest.id !== lastSeenId) {
+            showBubble(newest);
+          }
+        }
       } catch {
         net = "err";
       }
@@ -32,6 +75,7 @@
   onDestroy(() => {
     stopPoll?.();
     rat?.dispose();
+    clearBubbleTimer();
   });
 
   async function startDrag(e: MouseEvent) {
@@ -81,6 +125,17 @@
 
   {#if mode.mode === "away"}
     <div class="zzz">z Z z</div>
+  {/if}
+
+  {#if bubble !== null}
+    <div class="pushback-bubble hud-panel hud-tape">
+      <div class="bubble-title">{bubble.title}</div>
+      <div class="bubble-msg">{bubble.message_en}</div>
+      <div class="bubble-actions">
+        <button class="hud-btn bubble-btn" onclick={() => bubble && bubbleFeedback(bubble.id, "useful")} title="Useful">✓</button>
+        <button class="hud-btn bubble-btn" onclick={() => bubble && bubbleFeedback(bubble.id, "dismiss")} title="Dismiss">✕</button>
+      </div>
+    </div>
   {/if}
 
   {#if showQuick}
@@ -156,5 +211,47 @@
     font-size: 10px;
     color: var(--hud-ink-dim);
     white-space: nowrap;
+  }
+
+  /* Pushback bubble: absolute paper card above the rat */
+  .pushback-bubble {
+    position: absolute;
+    top: 24px; /* above canvas (canvas starts below grip ~30px) */
+    left: 50%;
+    transform: translateX(-50%) rotate(-1deg);
+    width: 170px;
+    z-index: 10;
+    padding: 0;
+    color: var(--hud-ink);
+  }
+  .bubble-title {
+    font-family: var(--hud-font-marker);
+    font-size: 11px;
+    padding: 6px 8px 2px;
+    color: var(--hud-ink);
+    line-height: 1.2;
+    font-weight: normal;
+  }
+  .bubble-msg {
+    font-family: var(--hud-font-body);
+    font-size: 11px;
+    line-height: 1.35;
+    padding: 0 8px 4px;
+    color: var(--hud-ink);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .bubble-actions {
+    display: flex;
+    gap: 4px;
+    padding: 4px 8px 8px;
+  }
+  .bubble-btn {
+    font-size: 13px;
+    padding: 2px 8px;
+    line-height: 1;
   }
 </style>

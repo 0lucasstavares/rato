@@ -3,6 +3,7 @@
   import Now from "./tabs/Now.svelte";
   import Sensors from "./tabs/Sensors.svelte";
   import Settings from "./tabs/Settings.svelte";
+  import Pushback from "./tabs/Pushback.svelte";
 
   let active = $state("Now");
 </script>
@@ -12,10 +13,12 @@
     <span class="logo">RATO</span>
     <span class="sub">developer companion · M2 shell</span>
   </header>
-  <TabBar tabs={["Now", "Sensors", "Settings"]} bind:active />
+  <TabBar tabs={["Now", "Pushback", "Sensors", "Settings"]} bind:active />
   <main>
     {#if active === "Now"}
       <Now />
+    {:else if active === "Pushback"}
+      <Pushback />
     {:else if active === "Sensors"}
       <Sensors />
     {:else}

@@ -3,12 +3,13 @@
   import HudPanel from "../../ui/hud/HudPanel.svelte";
   import MeterBar from "../../ui/hud/MeterBar.svelte";
   import { fmtAgo, fmtDuration, poll, rpc } from "../../lib/rpc";
-  import type { Observation, Project, StatusResult, WorkSession } from "../../lib/types";
+  import type { Observation, Project, PushbackDto, StatusResult, WorkSession } from "../../lib/types";
 
   let status = $state<StatusResult | null>(null);
   let sessions = $state<WorkSession[]>([]);
   let observations = $state<Observation[]>([]);
   let projects = $state<Map<string, Project>>(new Map());
+  let recentPushbacks = $state<PushbackDto[]>([]);
   let stop: (() => void) | null = null;
 
   onMount(() => {
@@ -18,9 +19,17 @@
       observations = await rpc<Observation[]>("observations.recent", { limit: 10 });
       const list = await rpc<Project[]>("projects.list");
       projects = new Map(list.map((p) => [p.id, p]));
+      recentPushbacks = await rpc<PushbackDto[]>("pushbacks.recent", { n: 3 });
     }, 5000);
   });
   onDestroy(() => stop?.());
+
+  function severityColor(severity: string): string {
+    if (severity === "nudge") return "var(--hud-info)";
+    if (severity === "warn") return "var(--hud-warn)";
+    if (severity === "block-suggest") return "var(--hud-danger)";
+    return "var(--hud-info)";
+  }
 
   let openSessions = $derived(sessions.filter((s) => s.ended === null));
 </script>
@@ -60,6 +69,20 @@
     {:else}
       <div class="kv">no observations yet</div>
     {/each}
+  </HudPanel>
+
+  <HudPanel title="Critic">
+    {#if recentPushbacks.length === 0}
+      <div class="kv">no recent pushbacks</div>
+    {:else}
+      {#each recentPushbacks as p (p.id)}
+        <div class="pb-row">
+          <span class="pb-dot" style="background: {severityColor(p.severity)};"></span>
+          <span class="pb-title">{p.title}</span>
+          <span class="dim pb-ago">{fmtAgo(p.ts)}</span>
+        </div>
+      {/each}
+    {/if}
   </HudPanel>
 </div>
 
@@ -116,5 +139,33 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .pb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--hud-ink) 15%, transparent);
+  }
+  .pb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid var(--hud-ink);
+    flex-shrink: 0;
+  }
+  .pb-title {
+    flex: 1;
+    font-family: var(--hud-font-head);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--hud-ink);
+  }
+  .pb-ago {
+    font-family: var(--hud-font-marker);
+    font-size: 10px;
+    flex-shrink: 0;
   }
 </style>

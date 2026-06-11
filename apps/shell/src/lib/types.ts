@@ -51,3 +51,24 @@ export interface ModeState {
   since_ms: number;
   idle_ms: number | null;
 }
+
+/** Wire DTO mirroring rat-proto PushbackDto / rat_store::rows::Pushback */
+export interface PushbackDto {
+  id: string;
+  ts: number;
+  mode: string;
+  trigger: string;
+  severity: "nudge" | "warn" | "block-suggest" | string;
+  title: string;
+  message_en: string;
+  message_pt: string;
+  /** JSON array of {observation_id, quote} objects */
+  evidence: Array<{ observation_id: string; quote: string }>;
+  /** JSON array of {kind, detail} objects */
+  proposals: Array<{ kind: string; detail: string }>;
+  confidence: number;
+  /** "shown" | "queued" | "accepted" | "dismissed" | "snoozed" */
+  status: string;
+  decided_at: number | null;
+  latency_ms: number | null;
+}
