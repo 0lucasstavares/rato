@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rato-shell",
+  "version": "0.1.0",
+  "identifier": "dev.rato.shell",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "avatar",
+        "url": "avatar.html",
+        "width": 320,
+        "height": 380,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "title": "rato"
+      },
+      {
+        "label": "dashboard",
+        "url": "dashboard.html",
+        "width": 1100,
+        "height": 720,
+        "visible": false,
+        "title": "RATO"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

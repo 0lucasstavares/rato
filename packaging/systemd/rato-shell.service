@@ -1,0 +1,14 @@
+[Unit]
+Description=RATO shell (avatar + dashboard)
+PartOf=graphical-session.target
+After=graphical-session.target ratd.service
+
+[Service]
+Type=simple
+ExecStart=%h/rato/apps/shell/src-tauri/target/release/rato-shell
+Restart=on-failure
+RestartSec=3
+Environment=RAT_LOG=info
+
+[Install]
+WantedBy=graphical-session.target
