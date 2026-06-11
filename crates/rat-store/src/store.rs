@@ -35,8 +35,8 @@ enum Cmd {
     UpdateMemoryConfidence { id: String, confidence: f64, reply: Reply<()> },
     ArchiveMemory { id: String, reply: Reply<()> },
     ListMemories { filter: MemoryFilter, reply: Reply<Vec<Memory>> },
-    FtsObservations { query: String, limit: u32, reply: Reply<Vec<(String, f64)>> },
-    FtsMemories { query: String, limit: u32, reply: Reply<Vec<(String, f64)>> },
+    FtsObservations { query: String, limit: u32, reply: Reply<Vec<String>> },
+    FtsMemories { query: String, limit: u32, reply: Reply<Vec<String>> },
     UnembeddedObservations { kinds: Vec<String>, limit: u32, reply: Reply<Vec<Observation>> },
     SetObservationEmbedding { obs_id: String, embedding: Vec<f32>, reply: Reply<()> },
     SetMemoryEmbedding { memory_id: String, embedding: Vec<f32>, reply: Reply<()> },
@@ -212,12 +212,13 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
-    /// Full-text search over observations. Returns (obs_id, bm25_rank) pairs.
+    /// Full-text search over observations.
+    /// ids ordered best-match first; consumer derives 1-based rank from position.
     pub async fn fts_observations(
         &self,
         query: String,
         limit: u32,
-    ) -> Result<Vec<(String, f64)>, StoreError> {
+    ) -> Result<Vec<String>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
             .send(Cmd::FtsObservations { query, limit, reply: rtx })
@@ -225,12 +226,13 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
-    /// Full-text search over memories. Returns (memory_id, bm25_rank) pairs.
+    /// Full-text search over memories.
+    /// ids ordered best-match first; consumer derives 1-based rank from position.
     pub async fn fts_memories(
         &self,
         query: String,
         limit: u32,
-    ) -> Result<Vec<(String, f64)>, StoreError> {
+    ) -> Result<Vec<String>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
             .send(Cmd::FtsMemories { query, limit, reply: rtx })
@@ -927,34 +929,32 @@ fn do_list_memories(conn: &Connection, filter: &MemoryFilter) -> Result<Vec<Memo
     rows.into_iter().map(tuple_to_memory).collect()
 }
 
-fn do_fts_observations(conn: &Connection, query: &str, limit: u32) -> Result<Vec<(String, f64)>, StoreError> {
-    // Join FTS results back to observations to get the real id
+fn do_fts_observations(conn: &Connection, query: &str, limit: u32) -> Result<Vec<String>, StoreError> {
+    // Join FTS results back to observations to get the real id; ORDER BY bm25 ASC is correct
+    // because SQLite bm25() returns negative values (more negative = better match).
     let mut stmt = conn.prepare(
-        "SELECT o.id, bm25(observations_fts) AS rank
+        "SELECT o.id
          FROM observations_fts f
          JOIN observations o ON o.rowid = f.rowid
          WHERE observations_fts MATCH ?1
-         ORDER BY rank
+         ORDER BY bm25(observations_fts)
          LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![query, limit], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-    })?;
+    let rows = stmt.query_map(params![query, limit], |r| r.get::<_, String>(0))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn do_fts_memories(conn: &Connection, query: &str, limit: u32) -> Result<Vec<(String, f64)>, StoreError> {
+fn do_fts_memories(conn: &Connection, query: &str, limit: u32) -> Result<Vec<String>, StoreError> {
+    // ORDER BY bm25 ASC is correct: bm25() is negative, most-negative = best match.
     let mut stmt = conn.prepare(
-        "SELECT m.id, bm25(memories_fts) AS rank
+        "SELECT m.id
          FROM memories_fts f
          JOIN memories m ON m.rowid = f.rowid
          WHERE memories_fts MATCH ?1
-         ORDER BY rank
+         ORDER BY bm25(memories_fts)
          LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![query, limit], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
-    })?;
+    let rows = stmt.query_map(params![query, limit], |r| r.get::<_, String>(0))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -1459,7 +1459,7 @@ mod tests {
         // FTS should find it
         let hits = store.fts_observations("cargo".into(), 10).await.unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].0, obs.id);
+        assert_eq!(hits[0], obs.id);
 
         // Now add a memory and search it
         let mem = store
@@ -1475,7 +1475,7 @@ mod tests {
 
         let mem_hits = store.fts_memories("deploy".into(), 10).await.unwrap();
         assert_eq!(mem_hits.len(), 1);
-        assert_eq!(mem_hits[0].0, mem.id);
+        assert_eq!(mem_hits[0], mem.id);
     }
 
     #[tokio::test]

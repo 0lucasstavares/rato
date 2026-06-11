@@ -122,7 +122,8 @@ const MIGRATIONS: &[&str] = &[
     CREATE TRIGGER memories_fts_ad AFTER DELETE ON memories BEGIN
         INSERT INTO memories_fts(memories_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
     END;
-    INSERT INTO observations_fts(rowid, content) SELECT rowid, content FROM observations;",
+    INSERT INTO observations_fts(rowid, content) SELECT rowid, content FROM observations;
+    INSERT INTO memories_fts(rowid, title, body) SELECT rowid, title, body FROM memories;",
 ];
 
 pub fn open_db(path: &Path) -> Result<Connection, StoreError> {
@@ -235,6 +236,43 @@ mod tests {
         assert_eq!(count, 1, "FTS backfill should find existing observations");
         // summary column was added
         conn.prepare("SELECT summary FROM work_sessions").unwrap();
+    }
+
+    #[test]
+    fn observations_fts_delete_path_removes_from_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&tmp.path().join("t.db")).unwrap();
+
+        // Insert a row directly — the AFTER INSERT trigger populates the FTS index.
+        conn.execute(
+            "INSERT INTO observations (id, ts, kind, project_id, content, meta)
+             VALUES ('obs_del_test', 1000, 'shell_cmd', NULL, 'deleteme unique token xyzzy', '{}')",
+            [],
+        )
+        .unwrap();
+
+        // Confirm FTS match exists.
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations_fts WHERE observations_fts MATCH 'xyzzy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 1, "FTS index should contain the row after insert");
+
+        // Delete the observation row — the AFTER DELETE trigger should clean up the FTS index.
+        conn.execute("DELETE FROM observations WHERE id = 'obs_del_test'", []).unwrap();
+
+        // Confirm FTS match is gone.
+        let after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations_fts WHERE observations_fts MATCH 'xyzzy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, 0, "FTS index should be empty after deleting the observation");
     }
 
     #[test]

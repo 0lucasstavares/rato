@@ -54,10 +54,10 @@ trigger. Backfill existing observations rows inside the migration. Same pattern 
 Store API (async wrappers over the actor, mirroring existing style):
 `add_memory(NewMemory) -> Memory`, `update_memory_confidence(id, f64)`, `archive_memory(id)`,
 `list_memories(filter: {type?, project_id?, include_archived}) -> Vec<Memory>`,
-`fts_observations(query, limit) -> Vec<(obs_id, rank: f64)>` (bm25),
-`fts_memories(query, limit) -> Vec<(memory_id, rank)>`,
+`fts_observations(query, limit) -> Vec<String> /* rank order */`,
+`fts_memories(query, limit) -> Vec<String> /* rank order */`,
 `unembedded_observations(kinds: &[&str], limit) -> Vec<Observation>`,
-`set_observation_embedding(obs_id, Vec<f32>)` (BLOB little-endian f32s + set embedded=1),
+`set_observation_embedding(obs_id, Vec<f32>)` (BLOB little-endian f32s),
 `set_memory_embedding(memory_id, Vec<f32>)`,
 `all_observation_embeddings(limit) -> Vec<(obs_id, Vec<f32>)>`, same for memories,
 `observations_by_ids(&[String]) -> Vec<Observation>`,
@@ -128,7 +128,7 @@ retrieve.rs — the §9 pipeline, pure function for testability:
 
 ```rust
 pub struct Hit { pub id: String, pub kind: HitKind /*Observation|Memory*/, pub score: f64 }
-pub fn rrf_fuse(fts: &[(String, f64)], vec: &[(String, f64)], k: f64 /*60*/) -> Vec<(String, f64)>
+pub fn rrf_fuse(fts: &[String], vec: &[String], k: f64 /*60*/) -> Vec<(String, f64)>
 // score(id) = Σ 1/(k + rank_i) over lists containing id (rank 1-based); stable tie-break by id asc.
 pub fn recency_boost(score: f64, age_days: f64) -> f64 // score * (1.0 + 0.25 * (-age_days/14.0).exp())
 pub async fn search(store, embedder: Option<&EmbeddingClient>, query, project_id: Option, n) -> Vec<Hit>
