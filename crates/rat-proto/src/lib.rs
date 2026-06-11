@@ -22,6 +22,7 @@ pub mod methods {
     pub const WORKBENCH_TAIL: &str = "workbench.tail";
     pub const APPROVALS_PENDING: &str = "approvals.pending";
     pub const APPROVALS_DECIDE: &str = "approvals.decide";
+    pub const WORKBENCH_MERGE_BACK: &str = "workbench.merge_back";
 }
 
 pub mod errcodes {
@@ -283,6 +284,11 @@ pub struct WorkbenchTailParams {
     pub run_id: String,
     #[serde(default)]
     pub lines: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkbenchMergeBackParams {
+    pub run_id: String,
 }
 
 /// Wire DTO mirroring `rat_store::rows::AgentRun`.

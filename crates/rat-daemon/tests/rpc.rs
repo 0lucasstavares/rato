@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
-use rat_core::clock::SystemClock;
+use rat_core::clock::{Clock, FakeClock, SystemClock};
 use rat_daemon::ingest::Ingest;
 use rat_daemon::mode::ModeManager;
 use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
@@ -14,6 +15,13 @@ use rat_workbench::tmux::Tmux;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+
+static TEST_SOCKET_CTR: AtomicU32 = AtomicU32::new(0);
+
+fn unique_tmux_socket() -> String {
+    let n = TEST_SOCKET_CTR.fetch_add(1, Ordering::SeqCst);
+    format!("rato-rpctest-{}-{}", std::process::id(), n)
+}
 
 async fn start_with_store() -> (tempfile::TempDir, PathBuf, Store) {
     let tmp = tempfile::tempdir().unwrap();
@@ -367,4 +375,184 @@ async fn r3_approval_requires_slug() {
     assert!(resp.error.is_none(), "R3 with correct slug should proceed: {:?}", resp.error);
     let decided = resp.result.unwrap();
     assert_eq!(decided["status"], "approved");
+}
+
+// ---------------------------------------------------------------------------
+// workbench.merge_back RPC integration test
+//
+// Guards: skips when git is not on PATH.
+// Uses a unique tmux socket and cleans up on drop.
+// Seeds a "done" AgentRun (real git worktree + commit) then calls the RPC.
+// ---------------------------------------------------------------------------
+
+fn has_binary_rpc(name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn git_rpc(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .status()
+        .expect("git failed");
+    assert!(status.success(), "git {:?} failed in {}", args, dir.display());
+}
+
+async fn start_with_unique_socket(
+    tmux_socket: &str,
+    store: Store,
+    clock: Arc<FakeClock>,
+) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = tmp.path().join("ratd.sock");
+    let db_path = tmp.path().join("ignored.db"); // store already opened
+    let clock_arc: Arc<dyn rat_core::clock::Clock> = clock.clone();
+    let ingest = Arc::new(Ingest::new(
+        store.clone(),
+        clock_arc.clone(),
+        Sessionizer::new(DEFAULT_GAP_MS),
+    ));
+    let mode = Arc::new(ModeManager::new(0));
+    let task_runner = TaskRunner::new(
+        store.clone(),
+        Tmux::new(tmux_socket.to_string()),
+        clock_arc.clone(),
+    );
+    let ctx = Arc::new(ServerCtx {
+        store,
+        ingest,
+        mode,
+        started: Instant::now(),
+        db_path,
+        clock: clock_arc,
+        embedder: None,
+        llm_status: LlmStatusState::disabled(),
+        task_runner,
+    });
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(serve(listener, ctx));
+    (tmp, socket)
+}
+
+#[tokio::test]
+async fn workbench_merge_back_rpc_returns_approval() {
+    if !has_binary_rpc("git") {
+        eprintln!("skipping workbench_merge_back_rpc_returns_approval: git not found");
+        return;
+    }
+
+    // Unique tmux socket so teardown doesn't affect other tests.
+    let tmux_socket = unique_tmux_socket();
+    let tmux = Tmux::new(tmux_socket.clone());
+    struct TmuxGuard(Tmux);
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill_server();
+        }
+    }
+    let _tmux_guard = TmuxGuard(tmux.clone());
+
+    // Set up a real git repo with an initial commit.
+    let tmp_repo = tempfile::TempDir::new().unwrap();
+    let repo = tmp_repo.path().to_path_buf();
+    git_rpc(&repo, &["init", "-b", "main"]);
+    git_rpc(&repo, &["config", "user.email", "test@test.local"]);
+    git_rpc(&repo, &["config", "user.name", "Test"]);
+    std::fs::write(repo.join("README.md"), "# rpc test\n").unwrap();
+    git_rpc(&repo, &["add", "README.md"]);
+    git_rpc(&repo, &["commit", "-m", "init"]);
+
+    // Open store and create project.
+    let tmp_store = tempfile::TempDir::new().unwrap();
+    let clock = FakeClock::at(5_000_000);
+    let store = Store::open(&tmp_store.path().join("test.db"), clock.clone()).unwrap();
+
+    let project = store
+        .upsert_project(repo.display().to_string(), "rpc-merge-test".into())
+        .await
+        .expect("upsert project");
+
+    // Create a worktree branch and make a commit inside it.
+    let wt = rat_workbench::worktree::create(&repo, "rpctest", "rpc-merge-branch", "HEAD")
+        .expect("create worktree");
+    git_rpc(&wt.path, &["config", "user.email", "test@test.local"]);
+    git_rpc(&wt.path, &["config", "user.name", "Test"]);
+    std::fs::write(wt.path.join("AGENT_NOTE.md"), "rpc test\n").unwrap();
+    git_rpc(&wt.path, &["add", "AGENT_NOTE.md"]);
+    git_rpc(&wt.path, &["commit", "-m", "rpc: agent change"]);
+
+    // Insert a "done" AgentRun pointing at the worktree.
+    let run = store
+        .insert_agent_run(rat_store::rows::NewAgentRun {
+            adapter: "fakeagent".into(),
+            task_title: "rpc merge back test".into(),
+            project_id: project.id.clone(),
+            worktree_path: wt.path.display().to_string(),
+            branch: wt.branch.clone(),
+            tmux_target: None,
+            mode: "headless".into(),
+            tokens: serde_json::json!({}),
+            cost_usd: 0.0,
+            started: clock.now_ms(),
+        })
+        .await
+        .expect("insert run");
+    store
+        .update_agent_run_status(run.id.clone(), "done".into(), Some(clock.now_ms()), None, None)
+        .await
+        .expect("update status");
+
+    // Start the daemon server.
+    let (_tmp_srv, socket) =
+        start_with_unique_socket(&tmux_socket, store.clone(), clock.clone()).await;
+
+    // Connect and handshake.
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+
+    // Call workbench.merge_back.
+    let resp = c
+        .send(json!({
+            "id": 2,
+            "method": "workbench.merge_back",
+            "params": {"run_id": run.id}
+        }))
+        .await;
+    assert!(resp.error.is_none(), "merge_back must succeed: {:?}", resp.error);
+
+    let approval = resp.result.unwrap();
+    assert_eq!(approval["kind"], "merge_back", "approval kind must be merge_back");
+    assert_eq!(approval["risk"], 2, "MergeBack must be R2");
+    assert_eq!(approval["status"], "pending", "new approval must be pending");
+
+    // The approval must now appear in approvals.pending.
+    let pending_resp = c.send(json!({"id": 3, "method": "approvals.pending"})).await;
+    assert!(pending_resp.error.is_none());
+    let pending = pending_resp.result.unwrap();
+    let arr = pending.as_array().unwrap();
+    assert!(!arr.is_empty(), "approvals.pending must contain the new merge_back approval");
+    assert!(
+        arr.iter().any(|a| a["kind"] == "merge_back"),
+        "approvals.pending must include the merge_back approval"
+    );
+}
+
+#[tokio::test]
+async fn workbench_merge_back_rpc_unknown_run_returns_error() {
+    let (_tmp, socket) = start().await;
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+    let resp = c
+        .send(json!({
+            "id": 2,
+            "method": "workbench.merge_back",
+            "params": {"run_id": "nonexistent-run-id"}
+        }))
+        .await;
+    assert!(resp.error.is_some(), "unknown run_id must return an error");
+    assert_eq!(resp.error.unwrap().code, errcodes::INVALID_REQUEST);
 }

@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rat_proto::{
-    AgentRunDto, ApprovalDto, ApprovalsDecideParams, WorkbenchRunsParams, WorkbenchStartParams,
-    WorkbenchTailParams, errcodes, methods, HelloParams, HelloResult, HitDto, LlmKeyPresence,
-    LlmStatusResult, MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto,
+    AgentRunDto, ApprovalDto, ApprovalsDecideParams, WorkbenchMergeBackParams, WorkbenchRunsParams,
+    WorkbenchStartParams, WorkbenchTailParams, errcodes, methods, HelloParams, HelloResult, HitDto,
+    LlmKeyPresence, LlmStatusResult, MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto,
     PushbackFeedbackParams, PushbacksRecentParams, RecentParams, Request, Response, StatusResult,
     PROTO_VERSION,
 };
@@ -506,6 +506,16 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                     Ok(a) => Response::ok(req.id, serde_json::to_value(approval_to_dto(a)).expect("serializes")),
                     Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
                 }
+            }
+        }
+        methods::WORKBENCH_MERGE_BACK => {
+            let params: WorkbenchMergeBackParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+            };
+            match ctx.task_runner.merge_back(&params.run_id).await {
+                Ok(approval) => Response::ok(req.id, serde_json::to_value(approval_to_dto(approval)).expect("serializes")),
+                Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             }
         }
         other => {

@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use rat_proto::{
     methods, AgentRunDto, ApprovalDto, Event, HitDto, ModeState, NewEvent, Observation, Project,
-    PushbackDto, WorkSession,
+    PushbackDto, WorkSession, WorkbenchMergeBackParams,
 };
 
 /// RATO control CLI.
@@ -146,6 +146,10 @@ enum TaskCmd {
     List,
     /// Tail the tmux output of a run
     Tail {
+        run_id: String,
+    },
+    /// Trigger a merge-back approval for a completed run
+    MergeBack {
         run_id: String,
     },
 }
@@ -451,6 +455,26 @@ async fn main() -> anyhow::Result<()> {
             })).await?;
             let lines = result["lines"].as_str().unwrap_or("");
             print!("{}", lines);
+        }
+        Cmd::Task { cmd: TaskCmd::MergeBack { run_id } } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let approval: ApprovalDto = serde_json::from_value(
+                c.call(
+                    methods::WORKBENCH_MERGE_BACK,
+                    serde_json::to_value(WorkbenchMergeBackParams { run_id })?,
+                )
+                .await?,
+            )?;
+            let slug: String = approval.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
+            let diffstat = approval
+                .expected_impact
+                .get("diffstat")
+                .and_then(|v| v.as_str())
+                .unwrap_or("—");
+            println!(
+                "{} [{}] R{} {}  diffstat: {}",
+                approval.id, slug, approval.risk, approval.title, diffstat
+            );
         }
         Cmd::Approvals { cmd: None } => {
             let mut c = client::Client::connect(&socket).await?;

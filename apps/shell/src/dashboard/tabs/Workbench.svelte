@@ -3,12 +3,13 @@
   import HudPanel from "../../ui/hud/HudPanel.svelte";
   import StatusChip from "../../ui/hud/StatusChip.svelte";
   import { fmtAgo, poll, rpc } from "../../lib/rpc";
-  import type { AgentRunDto } from "../../lib/types";
+  import type { AgentRunDto, ApprovalDto } from "../../lib/types";
 
   let runs = $state<AgentRunDto[]>([]);
   let expanded = $state<Set<string>>(new Set());
   let tailLines = $state<Map<string, string>>(new Map());
   let tailPolls = $state<Map<string, () => void>>(new Map());
+  let mergingRunIds = $state<Set<string>>(new Set());
   let stop: (() => void) | null = null;
 
   async function loadRuns() {
@@ -56,6 +57,20 @@
       tailPolls = nextPolls;
     }
     expanded = next;
+  }
+
+  async function triggerMergeBack(runId: string) {
+    const next = new Set(mergingRunIds);
+    next.add(runId);
+    mergingRunIds = next;
+    try {
+      await rpc<ApprovalDto>("workbench.merge_back", { run_id: runId });
+      await loadRuns();
+    } finally {
+      const after = new Set(mergingRunIds);
+      after.delete(runId);
+      mergingRunIds = after;
+    }
   }
 
   function statusState(status: string): "on" | "warn" | "err" | "off" {
@@ -113,9 +128,12 @@
               >{expanded.has(run.id) ? "▲" : "▼"}</button>
 
               {#if run.status === "done"}
-                <span class="merge-note mono" title="Merge-back requires a server-side RPC not yet exposed in M4. Approve any pending merge_back approval in the Approvals tab.">
-                  → Approvals
-                </span>
+                <button
+                  class="hud-btn merge-btn"
+                  disabled={mergingRunIds.has(run.id)}
+                  onclick={() => triggerMergeBack(run.id)}
+                  title="Create a merge-back approval for this run"
+                >{mergingRunIds.has(run.id) ? "…" : "Merge back"}</button>
               {/if}
             </span>
           </div>
@@ -210,11 +228,11 @@
     line-height: 1;
   }
 
-  .merge-note {
+  .merge-btn {
     font-size: 10px;
-    color: var(--hud-warn);
+    padding: 2px 6px;
+    line-height: 1;
     white-space: nowrap;
-    cursor: help;
   }
 
   .tail-block {
