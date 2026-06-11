@@ -14,8 +14,8 @@
       {
         "label": "avatar",
         "url": "avatar.html",
-        "width": 320,
-        "height": 380,
+        "width": 180,
+        "height": 240,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,

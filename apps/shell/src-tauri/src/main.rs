@@ -1,10 +1,35 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, PhysicalPosition};
 use tokio::sync::Mutex;
 
 use rat_client::ManagedClient;
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct AvatarPos {
+    x: i32,
+    y: i32,
+}
+
+fn pos_file() -> std::path::PathBuf {
+    rat_core::paths::data_dir().join("avatar-pos.json")
+}
+
+fn load_pos() -> Option<AvatarPos> {
+    serde_json::from_str(&std::fs::read_to_string(pos_file()).ok()?).ok()
+}
+
+fn save_pos(p: AvatarPos) {
+    let path = pos_file();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string(&p) {
+        let _ = std::fs::write(path, json);
+    }
+}
 
 struct Shell {
     client: Mutex<ManagedClient>,
@@ -48,29 +73,56 @@ fn main() {
         .manage(Shell { client: Mutex::new(ManagedClient::new(rat_core::paths::socket_path())) })
         .invoke_handler(tauri::generate_handler![rpc_call, open_dashboard])
         .setup(|app| {
-            // avatar: bottom-left of the primary monitor, with margins
+            // avatar: restore the last dragged position; default = flush bottom-left
+            // (torso-up bust — the screen edge is his crop line). spec 2026-06-11
             if let Some(avatar) = app.get_webview_window("avatar") {
-                if let Ok(Some(monitor)) = avatar.primary_monitor() {
-                    let size = monitor.size();
-                    let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
-                        width: 320,
-                        height: 380,
-                    });
-                    let margin = 16;
-                    let x = monitor.position().x + margin;
-                    let y = monitor.position().y + size.height as i32 - outer.height as i32 - margin - 48;
-                    let _ = avatar.set_position(PhysicalPosition { x, y });
-                }
-                // dashboard closes to tray-less hidden state; avatar lives on
-                if let Some(dash) = app.get_webview_window("dashboard") {
-                    let dash_handle = dash.clone();
-                    dash.on_window_event(move |event| {
-                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = dash_handle.hide();
+                let saved = load_pos().filter(|p| {
+                    avatar
+                        .available_monitors()
+                        .map(|ms| {
+                            ms.iter().any(|m| {
+                                let mp = m.position();
+                                let ms_ = m.size();
+                                p.x >= mp.x
+                                    && p.x < mp.x + ms_.width as i32
+                                    && p.y >= mp.y
+                                    && p.y < mp.y + ms_.height as i32
+                            })
+                        })
+                        .unwrap_or(false)
+                });
+                let pos = saved.or_else(|| {
+                    avatar.primary_monitor().ok().flatten().map(|monitor| {
+                        let size = monitor.size();
+                        let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
+                            width: 180,
+                            height: 240,
+                        });
+                        AvatarPos {
+                            x: monitor.position().x + 16,
+                            y: monitor.position().y + size.height as i32 - outer.height as i32,
                         }
-                    });
+                    })
+                });
+                if let Some(p) = pos {
+                    let _ = avatar.set_position(PhysicalPosition { x: p.x, y: p.y });
                 }
+                // persist drags so the next launch reopens where the operator left him
+                avatar.on_window_event(|event| {
+                    if let tauri::WindowEvent::Moved(p) = event {
+                        save_pos(AvatarPos { x: p.x, y: p.y });
+                    }
+                });
+            }
+            // dashboard closes to tray-less hidden state; avatar lives on
+            if let Some(dash) = app.get_webview_window("dashboard") {
+                let dash_handle = dash.clone();
+                dash.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = dash_handle.hide();
+                    }
+                });
             }
             Ok(())
         })
