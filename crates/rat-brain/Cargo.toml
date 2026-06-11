@@ -12,8 +12,14 @@ tracing = { workspace = true }
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 keyring = { version = "3", default-features = true }
+rat-core = { path = "../rat-core" }
+rat-proto = { path = "../rat-proto" }
+rat-store = { path = "../rat-store" }
 
 [dev-dependencies]
 tokio = { workspace = true }
 wiremock = "0.6"
 serde_json = { workspace = true }
+tempfile = { workspace = true }
+rat-core = { path = "../rat-core" }
+rat-store = { path = "../rat-store" }

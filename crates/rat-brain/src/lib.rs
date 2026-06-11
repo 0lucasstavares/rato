@@ -1,6 +1,9 @@
 pub mod backend;
 pub mod error;
 pub mod keys;
+pub mod detect;
+pub mod governor;
+pub mod critic;
 
 mod openai;
 mod anthropic;

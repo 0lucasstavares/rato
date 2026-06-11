@@ -1462,9 +1462,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "keyring",
+ "rat-core",
+ "rat-proto",
+ "rat-store",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
