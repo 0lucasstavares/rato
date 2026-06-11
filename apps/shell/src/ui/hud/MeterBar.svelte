@@ -7,18 +7,13 @@
     text = "",
   }: { label: string; value: number; max: number; color?: string; text?: string } = $props();
 
-  const SEGMENTS = 20;
-  let filled = $derived(
-    Math.max(0, Math.min(SEGMENTS, Math.round((value / Math.max(1, max)) * SEGMENTS))),
-  );
+  let pct = $derived(Math.max(0, Math.min(100, (value / Math.max(1, max)) * 100)));
 </script>
 
 <div class="meter">
   <span class="label">{label}</span>
-  <span class="segments">
-    {#each Array(SEGMENTS) as _, i}
-      <span class="seg" style:background={i < filled ? color : "color-mix(in srgb, var(--hud-ink) 20%, transparent)"}></span>
-    {/each}
+  <span class="bar">
+    <span class="fill" style:width="{pct}%" style:background={color}></span>
   </span>
   <span class="text">{text}</span>
 </div>
@@ -28,30 +23,33 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 3px 0;
+    margin: 4px 0;
   }
   .label {
     font-family: var(--hud-font-head);
-    font-size: 9px;
+    font-size: 10px;
     letter-spacing: 1px;
     text-transform: uppercase;
     width: 90px;
     color: var(--hud-ink-dim);
   }
-  .segments {
-    display: inline-flex;
-    gap: 2px;
-    border: 1px solid var(--hud-ink);
-    padding: 2px;
-    background: var(--hud-bg);
-  }
-  .seg {
-    width: 7px;
-    height: 10px;
+  .bar {
     display: inline-block;
+    width: 150px;
+    height: 12px;
+    border: 2px solid var(--hud-ink);
+    background: var(--hud-panel);
+    box-shadow: var(--hud-shadow-sm);
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    /* marker stroke: slightly ragged right edge */
+    clip-path: polygon(0 0, 100% 0, 97% 55%, 100% 100%, 0 100%);
   }
   .text {
-    font-size: 11px;
+    font-size: 12px;
+    font-family: var(--hud-font-data);
     color: var(--hud-ink-dim);
   }
 </style>

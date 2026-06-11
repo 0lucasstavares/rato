@@ -8,7 +8,8 @@
 <nav class="tabbar">
   {#each tabs as tab}
     <button
-      class="hud-btn tab"
+      class="tab"
+      class:hud-marker-stroke={active === tab}
       class:active={active === tab}
       onclick={() => (active = tab)}
     >
@@ -20,17 +21,25 @@
 <style>
   .tabbar {
     display: flex;
-    gap: 4px;
-    padding: 8px 8px 0 8px;
-    border-bottom: 2px solid var(--hud-ink);
+    gap: 18px;
+    padding: 10px 16px 12px;
   }
   .tab {
-    border-bottom: none;
+    font-family: var(--hud-font-head);
+    font-size: 17px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--hud-ink-dim);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .tab:hover {
+    color: var(--hud-ink);
+    rotate: -1deg;
   }
   .tab.active {
-    color: var(--hud-accent);
-    border-color: var(--hud-accent);
-    border-bottom: none;
-    background: var(--hud-panel);
+    color: var(--hud-ink);
   }
 </style>
