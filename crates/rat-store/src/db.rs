@@ -124,6 +124,61 @@ const MIGRATIONS: &[&str] = &[
     END;
     INSERT INTO observations_fts(rowid, content) SELECT rowid, content FROM observations;
     INSERT INTO memories_fts(rowid, title, body) SELECT rowid, title, body FROM memories;",
+    // v4: approvals, actions, agent_runs, blobs (M4 Workbench)
+    "CREATE TABLE approvals (
+        id              TEXT PRIMARY KEY,
+        created         INTEGER NOT NULL,
+        kind            TEXT NOT NULL,
+        risk            INTEGER NOT NULL,
+        title           TEXT NOT NULL,
+        reason          TEXT NOT NULL,
+        cwd             TEXT,
+        target          TEXT,
+        agent_identity  TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        expected_impact TEXT NOT NULL,
+        expires_at      INTEGER NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        decided_at      INTEGER,
+        decided_via     TEXT,
+        decision_note   TEXT,
+        execution       TEXT
+    );
+    CREATE INDEX idx_approvals_status_expires ON approvals(status, expires_at);
+    CREATE TABLE actions (
+        id          TEXT PRIMARY KEY,
+        approval_id TEXT,
+        kind        TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        started     INTEGER NOT NULL,
+        ended       INTEGER,
+        exit_code   INTEGER,
+        output_blob TEXT
+    );
+    CREATE TABLE agent_runs (
+        id             TEXT PRIMARY KEY,
+        adapter        TEXT NOT NULL,
+        task_title     TEXT NOT NULL,
+        project_id     TEXT NOT NULL,
+        worktree_path  TEXT NOT NULL,
+        branch         TEXT NOT NULL,
+        tmux_target    TEXT,
+        mode           TEXT NOT NULL,
+        status         TEXT NOT NULL,
+        tokens         TEXT NOT NULL DEFAULT '{}',
+        cost_usd       REAL NOT NULL DEFAULT 0.0,
+        started        INTEGER NOT NULL,
+        ended          INTEGER,
+        result_summary TEXT,
+        diffstat       TEXT
+    );
+    CREATE INDEX idx_agent_runs_status_started ON agent_runs(status, started);
+    CREATE TABLE blobs (
+        id      TEXT PRIMARY KEY,
+        sha256  TEXT UNIQUE NOT NULL,
+        bytes   BLOB NOT NULL,
+        created INTEGER NOT NULL
+    );",
 ];
 
 pub fn open_db(path: &Path) -> Result<Connection, StoreError> {
@@ -273,6 +328,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!(after, 0, "FTS index should be empty after deleting the observation");
+    }
+
+    #[test]
+    fn v3_database_upgrades_to_v4_keeping_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        // hand-build a v3 database with rows in v3 tables
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute_batch(MIGRATIONS[1]).unwrap();
+            conn.execute_batch(MIGRATIONS[2]).unwrap();
+            conn.pragma_update(None, "user_version", 3i64).unwrap();
+            conn.execute(
+                "INSERT INTO memories (id, type, project_id, title, body, confidence, created, updated, source_event_ids, archived)
+                 VALUES ('m1', 'note', NULL, 'Test memory', 'Body text', 0.9, 1000, 1000, '[]', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO pushbacks (id, ts, mode, trigger, severity, title, message_en, message_pt, evidence, proposals, confidence, status)
+                 VALUES ('pb1', 1000, 'mentor', 'stuck_loop', 'warn', 'Title', 'Msg EN', 'Msg PT', '[]', '[]', 0.8, 'shown')",
+                [],
+            )
+            .unwrap();
+        }
+        // open_db should run v4 migration and reach version 4
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        assert_eq!(v, 4);
+        // v3 data is still there
+        let mem_count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0)).unwrap();
+        assert_eq!(mem_count, 1, "existing memory row must survive migration");
+        let pb_count: i64 = conn.query_row("SELECT COUNT(*) FROM pushbacks", [], |r| r.get(0)).unwrap();
+        assert_eq!(pb_count, 1, "existing pushback row must survive migration");
+        // v4 tables exist
+        conn.prepare("SELECT id, created, kind, risk, title, reason, cwd, target, agent_identity, payload, expected_impact, expires_at, status, decided_at, decided_via, decision_note, execution FROM approvals").unwrap();
+        conn.prepare("SELECT id, approval_id, kind, payload, started, ended, exit_code, output_blob FROM actions").unwrap();
+        conn.prepare("SELECT id, adapter, task_title, project_id, worktree_path, branch, tmux_target, mode, status, tokens, cost_usd, started, ended, result_summary, diffstat FROM agent_runs").unwrap();
+        conn.prepare("SELECT id, sha256, bytes, created FROM blobs").unwrap();
+        // v4 indexes exist (query via sqlite_master)
+        let idx: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_approvals_status_expires'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(idx, 1, "idx_approvals_status_expires must exist");
+        let idx2: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_agent_runs_status_started'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(idx2, 1, "idx_agent_runs_status_started must exist");
     }
 
     #[test]

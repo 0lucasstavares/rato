@@ -83,6 +83,103 @@ pub struct NewPushback {
 }
 
 // ---------------------------------------------------------------------------
+// Approval (v4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Approval {
+    pub id: String,
+    pub created: i64,
+    pub kind: String,
+    pub risk: i64,
+    pub title: String,
+    pub reason: String,
+    pub cwd: Option<String>,
+    pub target: Option<String>,
+    pub agent_identity: String,
+    /// JSON payload: exact command/bytes/diff
+    pub payload: Value,
+    /// JSON: expected impact
+    pub expected_impact: Value,
+    pub expires_at: i64,
+    /// pending | approved | denied | expired | cancelled
+    pub status: String,
+    pub decided_at: Option<i64>,
+    /// popup | dashboard | voice | cli
+    pub decided_via: Option<String>,
+    pub decision_note: Option<String>,
+    /// JSON: started, ended, exit_code, output_ref, verified_target
+    pub execution: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewApproval {
+    pub kind: String,
+    pub risk: i64,
+    pub title: String,
+    pub reason: String,
+    pub cwd: Option<String>,
+    pub target: Option<String>,
+    pub agent_identity: String,
+    pub payload: Value,
+    pub expected_impact: Value,
+    pub expires_at: i64,
+}
+
+// ---------------------------------------------------------------------------
+// AgentRun (v4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentRun {
+    pub id: String,
+    pub adapter: String,
+    pub task_title: String,
+    pub project_id: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub tmux_target: Option<String>,
+    /// headless | interactive
+    pub mode: String,
+    /// running | done | failed | merged (free string)
+    pub status: String,
+    /// JSON token counts
+    pub tokens: Value,
+    pub cost_usd: f64,
+    pub started: i64,
+    pub ended: Option<i64>,
+    pub result_summary: Option<String>,
+    /// JSON diffstat
+    pub diffstat: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAgentRun {
+    pub adapter: String,
+    pub task_title: String,
+    pub project_id: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub tmux_target: Option<String>,
+    pub mode: String,
+    pub tokens: Value,
+    pub cost_usd: f64,
+    pub started: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Blob (v4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Blob {
+    pub id: String,
+    pub sha256: String,
+    pub bytes: Vec<u8>,
+    pub created: i64,
+}
+
+// ---------------------------------------------------------------------------
 // Embedding helpers (Vec<f32> ↔ little-endian bytes)
 // ---------------------------------------------------------------------------
 

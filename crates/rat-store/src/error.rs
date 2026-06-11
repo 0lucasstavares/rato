@@ -8,4 +8,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("store thread is gone")]
     ActorGone,
+    #[error("{0}")]
+    InvalidState(String),
+    #[error("not found")]
+    NotFound,
 }

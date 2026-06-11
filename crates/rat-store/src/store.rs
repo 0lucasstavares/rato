@@ -2,6 +2,8 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
+
 use rusqlite::{params, Connection};
 use tokio::sync::oneshot;
 
@@ -12,7 +14,8 @@ use rat_proto::{Event, NewEvent, NewObservation, Observation, Project, WorkSessi
 use crate::db::open_db;
 use crate::error::StoreError;
 use crate::rows::{
-    decode_embedding, encode_embedding, Memory, MemoryFilter, NewMemory, NewPushback, Pushback,
+    decode_embedding, encode_embedding, AgentRun, Approval, Blob, Memory, MemoryFilter, NewAgentRun,
+    NewApproval, NewMemory, NewPushback, Pushback,
 };
 
 type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
@@ -81,6 +84,35 @@ enum Cmd {
         max_rows: u32,
         reply: Reply<u32>,
     },
+    // v4 — approvals
+    InsertApproval { new_approval: NewApproval, reply: Reply<Approval> },
+    PendingApprovals { reply: Reply<Vec<Approval>> },
+    GetApproval { id: String, reply: Reply<Option<Approval>> },
+    DecideApproval {
+        id: String,
+        status: String,
+        decided_at: i64,
+        decided_via: String,
+        note: Option<String>,
+        reply: Reply<Approval>,
+    },
+    SetApprovalExecution { id: String, execution: serde_json::Value, reply: Reply<()> },
+    ExpireApprovals { now_ms: i64, reply: Reply<u32> },
+    // v4 — agent_runs
+    InsertAgentRun { run: NewAgentRun, reply: Reply<AgentRun> },
+    UpdateAgentRunStatus {
+        id: String,
+        status: String,
+        ended: Option<i64>,
+        result_summary: Option<String>,
+        diffstat: Option<serde_json::Value>,
+        reply: Reply<()>,
+    },
+    RecentAgentRuns { n: u32, reply: Reply<Vec<AgentRun>> },
+    GetAgentRun { id: String, reply: Reply<Option<AgentRun>> },
+    // v4 — blobs
+    InsertBlob { bytes: Vec<u8>, created: i64, reply: Reply<Blob> },
+    GetBlob { id: String, reply: Reply<Option<Blob>> },
 }
 
 /// Cloneable handle to the single-writer SQLite actor thread.
@@ -469,6 +501,136 @@ impl Store {
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
+
+    // -----------------------------------------------------------------------
+    // v4 store API — approvals
+    // -----------------------------------------------------------------------
+
+    pub async fn insert_approval(&self, new_approval: NewApproval) -> Result<Approval, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertApproval { new_approval, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn pending_approvals(&self) -> Result<Vec<Approval>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::PendingApprovals { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_approval(&self, id: String) -> Result<Option<Approval>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetApproval { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    /// Decide a pending approval. Returns error if the approval is not in `pending` status.
+    pub async fn decide_approval(
+        &self,
+        id: String,
+        status: String,
+        decided_at: i64,
+        decided_via: String,
+        note: Option<String>,
+    ) -> Result<Approval, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::DecideApproval { id, status, decided_at, decided_via, note, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn set_approval_execution(
+        &self,
+        id: String,
+        execution: serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SetApprovalExecution { id, execution, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    /// Expire all `pending` approvals whose `expires_at <= now_ms`. Returns count expired.
+    pub async fn expire_approvals(&self, now_ms: i64) -> Result<u32, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ExpireApprovals { now_ms, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    // -----------------------------------------------------------------------
+    // v4 store API — agent_runs
+    // -----------------------------------------------------------------------
+
+    pub async fn insert_agent_run(&self, run: NewAgentRun) -> Result<AgentRun, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertAgentRun { run, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn update_agent_run_status(
+        &self,
+        id: String,
+        status: String,
+        ended: Option<i64>,
+        result_summary: Option<String>,
+        diffstat: Option<serde_json::Value>,
+    ) -> Result<(), StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::UpdateAgentRunStatus { id, status, ended, result_summary, diffstat, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn recent_agent_runs(&self, n: u32) -> Result<Vec<AgentRun>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::RecentAgentRuns { n, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_agent_run(&self, id: String) -> Result<Option<AgentRun>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetAgentRun { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    // -----------------------------------------------------------------------
+    // v4 store API — blobs
+    // -----------------------------------------------------------------------
+
+    /// Insert a blob, deduplicating on sha256.
+    /// If a blob with the same content already exists, returns the existing row.
+    pub async fn insert_blob(&self, bytes: Vec<u8>, created: i64) -> Result<Blob, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertBlob { bytes, created, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_blob(&self, id: String) -> Result<Option<Blob>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetBlob { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
 }
 
 fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) {
@@ -585,6 +747,45 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             }
             Cmd::DeleteObservationsOlderThan { cutoff_ms, protected_ids, max_rows, reply } => {
                 let _ = reply.send(do_delete_observations_older_than(&conn, cutoff_ms, &protected_ids, max_rows));
+            }
+            // v4 — approvals
+            Cmd::InsertApproval { new_approval, reply } => {
+                let _ = reply.send(do_insert_approval(&conn, clock.as_ref(), new_approval));
+            }
+            Cmd::PendingApprovals { reply } => {
+                let _ = reply.send(do_pending_approvals(&conn));
+            }
+            Cmd::GetApproval { id, reply } => {
+                let _ = reply.send(do_get_approval(&conn, &id));
+            }
+            Cmd::DecideApproval { id, status, decided_at, decided_via, note, reply } => {
+                let _ = reply.send(do_decide_approval(&conn, &id, &status, decided_at, &decided_via, note.as_deref()));
+            }
+            Cmd::SetApprovalExecution { id, execution, reply } => {
+                let _ = reply.send(do_set_approval_execution(&conn, &id, &execution));
+            }
+            Cmd::ExpireApprovals { now_ms, reply } => {
+                let _ = reply.send(do_expire_approvals(&conn, now_ms));
+            }
+            // v4 — agent_runs
+            Cmd::InsertAgentRun { run, reply } => {
+                let _ = reply.send(do_insert_agent_run(&conn, run));
+            }
+            Cmd::UpdateAgentRunStatus { id, status, ended, result_summary, diffstat, reply } => {
+                let _ = reply.send(do_update_agent_run_status(&conn, &id, &status, ended, result_summary.as_deref(), diffstat.as_ref()));
+            }
+            Cmd::RecentAgentRuns { n, reply } => {
+                let _ = reply.send(do_recent_agent_runs(&conn, n));
+            }
+            Cmd::GetAgentRun { id, reply } => {
+                let _ = reply.send(do_get_agent_run(&conn, &id));
+            }
+            // v4 — blobs
+            Cmd::InsertBlob { bytes, created, reply } => {
+                let _ = reply.send(do_insert_blob(&conn, &bytes, created));
+            }
+            Cmd::GetBlob { id, reply } => {
+                let _ = reply.send(do_get_blob(&conn, &id));
             }
         }
     }
@@ -1456,6 +1657,373 @@ fn do_delete_observations_older_than(
     Ok(count)
 }
 
+// ---------------------------------------------------------------------------
+// v4 implementation functions — approvals
+// ---------------------------------------------------------------------------
+
+fn row_to_approval(r: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRow> {
+    Ok((
+        r.get(0)?,  // id
+        r.get(1)?,  // created
+        r.get(2)?,  // kind
+        r.get(3)?,  // risk
+        r.get(4)?,  // title
+        r.get(5)?,  // reason
+        r.get(6)?,  // cwd
+        r.get(7)?,  // target
+        r.get(8)?,  // agent_identity
+        r.get(9)?,  // payload (JSON text)
+        r.get(10)?, // expected_impact (JSON text)
+        r.get(11)?, // expires_at
+        r.get(12)?, // status
+        r.get(13)?, // decided_at
+        r.get(14)?, // decided_via
+        r.get(15)?, // decision_note
+        r.get(16)?, // execution (JSON text or NULL)
+    ))
+}
+
+#[allow(clippy::type_complexity)]
+type ApprovalRow = (
+    String, i64, String, i64, String, String,
+    Option<String>, Option<String>, String, String, String, i64, String,
+    Option<i64>, Option<String>, Option<String>, Option<String>,
+);
+
+fn tuple_to_approval(t: ApprovalRow) -> Result<Approval, StoreError> {
+    Ok(Approval {
+        id: t.0,
+        created: t.1,
+        kind: t.2,
+        risk: t.3,
+        title: t.4,
+        reason: t.5,
+        cwd: t.6,
+        target: t.7,
+        agent_identity: t.8,
+        payload: serde_json::from_str(&t.9)?,
+        expected_impact: serde_json::from_str(&t.10)?,
+        expires_at: t.11,
+        status: t.12,
+        decided_at: t.13,
+        decided_via: t.14,
+        decision_note: t.15,
+        execution: t.16.map(|s| serde_json::from_str(&s)).transpose()?,
+    })
+}
+
+const APPROVAL_SELECT: &str =
+    "SELECT id, created, kind, risk, title, reason, cwd, target, agent_identity,
+            payload, expected_impact, expires_at, status, decided_at, decided_via,
+            decision_note, execution FROM approvals";
+
+fn do_insert_approval(
+    conn: &Connection,
+    clock: &dyn Clock,
+    na: NewApproval,
+) -> Result<Approval, StoreError> {
+    let now = clock.now_ms();
+    let a = Approval {
+        id: new_id(),
+        created: now,
+        kind: na.kind,
+        risk: na.risk,
+        title: na.title,
+        reason: na.reason,
+        cwd: na.cwd,
+        target: na.target,
+        agent_identity: na.agent_identity,
+        payload: na.payload,
+        expected_impact: na.expected_impact,
+        expires_at: na.expires_at,
+        status: "pending".into(),
+        decided_at: None,
+        decided_via: None,
+        decision_note: None,
+        execution: None,
+    };
+    conn.execute(
+        "INSERT INTO approvals (id, created, kind, risk, title, reason, cwd, target,
+                                agent_identity, payload, expected_impact, expires_at,
+                                status, decided_at, decided_via, decision_note, execution)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        params![
+            a.id, a.created, a.kind, a.risk, a.title, a.reason, a.cwd, a.target,
+            a.agent_identity,
+            serde_json::to_string(&a.payload)?,
+            serde_json::to_string(&a.expected_impact)?,
+            a.expires_at, a.status, a.decided_at, a.decided_via, a.decision_note,
+            a.execution.as_ref().map(serde_json::to_string).transpose()?
+        ],
+    )?;
+    Ok(a)
+}
+
+fn do_pending_approvals(conn: &Connection) -> Result<Vec<Approval>, StoreError> {
+    let sql = format!("{} WHERE status = 'pending' ORDER BY created ASC", APPROVAL_SELECT);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<ApprovalRow> = stmt
+        .query_map([], row_to_approval)?
+        .collect::<Result<_, _>>()?;
+    rows.into_iter().map(tuple_to_approval).collect()
+}
+
+fn do_get_approval(conn: &Connection, id: &str) -> Result<Option<Approval>, StoreError> {
+    let sql = format!("{} WHERE id = ?1", APPROVAL_SELECT);
+    match conn.query_row(&sql, params![id], row_to_approval) {
+        Ok(row) => Ok(Some(tuple_to_approval(row)?)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+fn do_decide_approval(
+    conn: &Connection,
+    id: &str,
+    status: &str,
+    decided_at: i64,
+    decided_via: &str,
+    note: Option<&str>,
+) -> Result<Approval, StoreError> {
+    // Fetch current row — must exist and must be pending
+    let current = do_get_approval(conn, id)?
+        .ok_or(StoreError::NotFound)?;
+    if current.status != "pending" {
+        return Err(StoreError::InvalidState(format!(
+            "approval {} is '{}', not 'pending'; cannot decide",
+            id, current.status
+        )));
+    }
+    conn.execute(
+        "UPDATE approvals SET status = ?2, decided_at = ?3, decided_via = ?4, decision_note = ?5
+         WHERE id = ?1",
+        params![id, status, decided_at, decided_via, note],
+    )?;
+    // Return updated row
+    do_get_approval(conn, id)?.ok_or(StoreError::NotFound)
+}
+
+fn do_set_approval_execution(
+    conn: &Connection,
+    id: &str,
+    execution: &serde_json::Value,
+) -> Result<(), StoreError> {
+    conn.execute(
+        "UPDATE approvals SET execution = ?2 WHERE id = ?1",
+        params![id, serde_json::to_string(execution)?],
+    )?;
+    Ok(())
+}
+
+fn do_expire_approvals(conn: &Connection, now_ms: i64) -> Result<u32, StoreError> {
+    let n = conn.execute(
+        "UPDATE approvals SET status = 'expired'
+         WHERE status = 'pending' AND expires_at <= ?1",
+        params![now_ms],
+    )?;
+    Ok(n as u32)
+}
+
+// ---------------------------------------------------------------------------
+// v4 implementation functions — agent_runs
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::type_complexity)]
+type AgentRunRow = (
+    String, String, String, String, String, String, Option<String>,
+    String, String, String, f64, i64, Option<i64>, Option<String>, Option<String>,
+);
+
+fn row_to_agent_run(r: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRunRow> {
+    Ok((
+        r.get(0)?,  // id
+        r.get(1)?,  // adapter
+        r.get(2)?,  // task_title
+        r.get(3)?,  // project_id
+        r.get(4)?,  // worktree_path
+        r.get(5)?,  // branch
+        r.get(6)?,  // tmux_target
+        r.get(7)?,  // mode
+        r.get(8)?,  // status
+        r.get(9)?,  // tokens (JSON text)
+        r.get(10)?, // cost_usd
+        r.get(11)?, // started
+        r.get(12)?, // ended
+        r.get(13)?, // result_summary
+        r.get(14)?, // diffstat (JSON text or NULL)
+    ))
+}
+
+fn tuple_to_agent_run(t: AgentRunRow) -> Result<AgentRun, StoreError> {
+    Ok(AgentRun {
+        id: t.0,
+        adapter: t.1,
+        task_title: t.2,
+        project_id: t.3,
+        worktree_path: t.4,
+        branch: t.5,
+        tmux_target: t.6,
+        mode: t.7,
+        status: t.8,
+        tokens: serde_json::from_str(&t.9)?,
+        cost_usd: t.10,
+        started: t.11,
+        ended: t.12,
+        result_summary: t.13,
+        diffstat: t.14.map(|s| serde_json::from_str(&s)).transpose()?,
+    })
+}
+
+const AGENT_RUN_SELECT: &str =
+    "SELECT id, adapter, task_title, project_id, worktree_path, branch, tmux_target,
+            mode, status, tokens, cost_usd, started, ended, result_summary, diffstat
+     FROM agent_runs";
+
+fn do_insert_agent_run(conn: &Connection, run: NewAgentRun) -> Result<AgentRun, StoreError> {
+    let r = AgentRun {
+        id: new_id(),
+        adapter: run.adapter,
+        task_title: run.task_title,
+        project_id: run.project_id,
+        worktree_path: run.worktree_path,
+        branch: run.branch,
+        tmux_target: run.tmux_target,
+        mode: run.mode,
+        status: "running".into(),
+        tokens: run.tokens,
+        cost_usd: run.cost_usd,
+        started: run.started,
+        ended: None,
+        result_summary: None,
+        diffstat: None,
+    };
+    conn.execute(
+        "INSERT INTO agent_runs (id, adapter, task_title, project_id, worktree_path, branch,
+                                  tmux_target, mode, status, tokens, cost_usd, started, ended,
+                                  result_summary, diffstat)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            r.id, r.adapter, r.task_title, r.project_id, r.worktree_path, r.branch,
+            r.tmux_target, r.mode, r.status,
+            serde_json::to_string(&r.tokens)?,
+            r.cost_usd, r.started, r.ended, r.result_summary,
+            r.diffstat.as_ref().map(serde_json::to_string).transpose()?
+        ],
+    )?;
+    Ok(r)
+}
+
+fn do_update_agent_run_status(
+    conn: &Connection,
+    id: &str,
+    status: &str,
+    ended: Option<i64>,
+    result_summary: Option<&str>,
+    diffstat: Option<&serde_json::Value>,
+) -> Result<(), StoreError> {
+    conn.execute(
+        "UPDATE agent_runs SET status = ?2, ended = ?3, result_summary = ?4, diffstat = ?5
+         WHERE id = ?1",
+        params![
+            id, status, ended, result_summary,
+            diffstat.map(serde_json::to_string).transpose()?
+        ],
+    )?;
+    Ok(())
+}
+
+fn do_recent_agent_runs(conn: &Connection, n: u32) -> Result<Vec<AgentRun>, StoreError> {
+    let sql = format!("{} ORDER BY started DESC LIMIT ?1", AGENT_RUN_SELECT);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<AgentRunRow> = stmt
+        .query_map(params![n], row_to_agent_run)?
+        .collect::<Result<_, _>>()?;
+    rows.into_iter().map(tuple_to_agent_run).collect()
+}
+
+fn do_get_agent_run(conn: &Connection, id: &str) -> Result<Option<AgentRun>, StoreError> {
+    let sql = format!("{} WHERE id = ?1", AGENT_RUN_SELECT);
+    match conn.query_row(&sql, params![id], row_to_agent_run) {
+        Ok(row) => Ok(Some(tuple_to_agent_run(row)?)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// v4 implementation functions — blobs
+// ---------------------------------------------------------------------------
+
+fn do_insert_blob(conn: &Connection, bytes: &[u8], created: i64) -> Result<Blob, StoreError> {
+    let digest = sha256_hex(bytes);
+
+    // Check for existing blob with same sha256
+    let existing = conn
+        .query_row(
+            "SELECT id, sha256, bytes, created FROM blobs WHERE sha256 = ?1",
+            params![digest],
+            |r| {
+                Ok(Blob {
+                    id: r.get(0)?,
+                    sha256: r.get(1)?,
+                    bytes: r.get(2)?,
+                    created: r.get(3)?,
+                })
+            },
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+
+    if let Some(blob) = existing {
+        return Ok(blob);
+    }
+
+    let blob = Blob {
+        id: new_id(),
+        sha256: digest,
+        bytes: bytes.to_vec(),
+        created,
+    };
+    conn.execute(
+        "INSERT INTO blobs (id, sha256, bytes, created) VALUES (?1, ?2, ?3, ?4)",
+        params![blob.id, blob.sha256, blob.bytes, blob.created],
+    )?;
+    Ok(blob)
+}
+
+fn do_get_blob(conn: &Connection, id: &str) -> Result<Option<Blob>, StoreError> {
+    match conn.query_row(
+        "SELECT id, sha256, bytes, created FROM blobs WHERE id = ?1",
+        params![id],
+        |r| {
+            Ok(Blob {
+                id: r.get(0)?,
+                sha256: r.get(1)?,
+                bytes: r.get(2)?,
+                created: r.get(3)?,
+            })
+        },
+    ) {
+        Ok(blob) => Ok(Some(blob)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+/// Compute the SHA-256 digest of `data` and return it as a 64-char hex string.
+fn sha256_hex(data: &[u8]) -> String {
+    let digest = Sha256::digest(data);
+    let mut s = String::with_capacity(64);
+    for b in digest.iter() {
+        use std::fmt::Write;
+        write!(s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1924,5 +2492,268 @@ mod tests {
         // vec_observations row should be gone
         let embs = store.all_observation_embeddings(10).await.unwrap();
         assert!(embs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // v4 tests — approvals
+    // -----------------------------------------------------------------------
+
+    fn new_approval_fixture(expires_at: i64) -> crate::rows::NewApproval {
+        crate::rows::NewApproval {
+            kind: "command".into(),
+            risk: 1,
+            title: "Run cargo build".into(),
+            reason: "Build the project".into(),
+            cwd: Some("/home/user/proj".into()),
+            target: None,
+            agent_identity: "test-agent".into(),
+            payload: serde_json::json!({"cmd": "cargo build"}),
+            expected_impact: serde_json::json!({"files": []}),
+            expires_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_insert_and_pending_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        assert_eq!(a.status, "pending");
+        assert_eq!(a.created, 1_000);
+        assert_eq!(a.kind, "command");
+        assert_eq!(a.id.len(), 26);
+
+        let pending = store.pending_approvals().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, a.id);
+
+        let got = store.get_approval(a.id.clone()).await.unwrap();
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().title, "Run cargo build");
+    }
+
+    #[tokio::test]
+    async fn approval_decide_approved_denied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+
+        // Approve it
+        clock.advance(500);
+        let updated = store
+            .decide_approval(a.id.clone(), "approved".into(), 1_500, "popup".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(updated.status, "approved");
+        assert_eq!(updated.decided_at, Some(1_500));
+        assert_eq!(updated.decided_via.as_deref(), Some("popup"));
+
+        // No longer in pending list
+        let pending = store.pending_approvals().await.unwrap();
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn approval_double_decide_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+
+        // First decide: approved
+        store
+            .decide_approval(a.id.clone(), "approved".into(), 1_001, "popup".into(), None)
+            .await
+            .unwrap();
+
+        // Second decide on non-pending row must fail
+        let err = store
+            .decide_approval(a.id.clone(), "denied".into(), 1_002, "popup".into(), None)
+            .await;
+        assert!(err.is_err(), "deciding a non-pending approval must return an error");
+        match err.unwrap_err() {
+            crate::error::StoreError::InvalidState(_) => {}
+            other => panic!("expected InvalidState, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_expiry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // expires_at = 2_000; now = 1_000 → not yet expired
+        let _a1 = store.insert_approval(new_approval_fixture(2_000)).await.unwrap();
+        // expires_at = 500; now = 1_000 → should expire
+        let a2 = store.insert_approval(new_approval_fixture(500)).await.unwrap();
+
+        let expired_count = store.expire_approvals(1_000).await.unwrap();
+        assert_eq!(expired_count, 1);
+
+        let a2_got = store.get_approval(a2.id.clone()).await.unwrap().unwrap();
+        assert_eq!(a2_got.status, "expired");
+
+        // The other one still pending
+        let pending = store.pending_approvals().await.unwrap();
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn approval_set_execution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        store
+            .decide_approval(a.id.clone(), "approved".into(), 1_001, "cli".into(), Some("auto".into()))
+            .await
+            .unwrap();
+
+        let exec = serde_json::json!({"started": 1_100, "exit_code": 0, "output_ref": null});
+        store.set_approval_execution(a.id.clone(), exec.clone()).await.unwrap();
+
+        let got = store.get_approval(a.id.clone()).await.unwrap().unwrap();
+        assert!(got.execution.is_some());
+        assert_eq!(got.execution.unwrap()["exit_code"], 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // v4 tests — agent_runs
+    // -----------------------------------------------------------------------
+
+    fn new_run_fixture(started: i64) -> crate::rows::NewAgentRun {
+        crate::rows::NewAgentRun {
+            adapter: "test-adapter".into(),
+            task_title: "Fix the bug".into(),
+            project_id: "proj-1".into(),
+            worktree_path: "/tmp/wt/fix".into(),
+            branch: "fix/bug-123".into(),
+            tmux_target: Some("rat:workbench.0".into()),
+            mode: "headless".into(),
+            tokens: serde_json::json!({"in": 100, "out": 50}),
+            cost_usd: 0.001,
+            started,
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_run_insert_and_status_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(5_000)).unwrap();
+
+        let run = store.insert_agent_run(new_run_fixture(5_000)).await.unwrap();
+        assert_eq!(run.status, "running");
+        assert_eq!(run.adapter, "test-adapter");
+        assert_eq!(run.id.len(), 26);
+        assert!(run.ended.is_none());
+
+        store
+            .update_agent_run_status(
+                run.id.clone(),
+                "done".into(),
+                Some(6_000),
+                Some("Fixed the bug successfully".into()),
+                Some(serde_json::json!({"added": 10, "removed": 2})),
+            )
+            .await
+            .unwrap();
+
+        let got = store.get_agent_run(run.id.clone()).await.unwrap().unwrap();
+        assert_eq!(got.status, "done");
+        assert_eq!(got.ended, Some(6_000));
+        assert_eq!(got.result_summary.as_deref(), Some("Fixed the bug successfully"));
+        assert!(got.diffstat.is_some());
+        assert_eq!(got.diffstat.unwrap()["added"], 10);
+    }
+
+    #[tokio::test]
+    async fn agent_run_recent_returns_newest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        store.insert_agent_run(new_run_fixture(1_000)).await.unwrap();
+        store.insert_agent_run(new_run_fixture(2_000)).await.unwrap();
+        store.insert_agent_run(new_run_fixture(3_000)).await.unwrap();
+
+        let recent = store.recent_agent_runs(2).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].started, 3_000);
+        assert_eq!(recent[1].started, 2_000);
+    }
+
+    #[tokio::test]
+    async fn agent_run_get_nonexistent_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+        let got = store.get_agent_run("nonexistent-id".into()).await.unwrap();
+        assert!(got.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // v4 tests — blobs
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn blob_insert_and_get() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        let data = b"hello, world!";
+        let blob = store.insert_blob(data.to_vec(), 1_000).await.unwrap();
+        assert_eq!(blob.id.len(), 26);
+        assert_eq!(blob.bytes, data);
+        assert_eq!(blob.sha256.len(), 64);
+        assert_eq!(blob.created, 1_000);
+
+        let got = store.get_blob(blob.id.clone()).await.unwrap();
+        assert!(got.is_some());
+        let got = got.unwrap();
+        assert_eq!(got.bytes, data.to_vec());
+        assert_eq!(got.sha256, blob.sha256);
+    }
+
+    #[tokio::test]
+    async fn blob_deduplication_on_sha256() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        let data = b"deduplicate me";
+        let b1 = store.insert_blob(data.to_vec(), 1_000).await.unwrap();
+        let b2 = store.insert_blob(data.to_vec(), 2_000).await.unwrap(); // same content, different time
+
+        // Must return the same id and sha256
+        assert_eq!(b1.id, b2.id, "same content must deduplicate to same id");
+        assert_eq!(b1.sha256, b2.sha256);
+        assert_eq!(b1.created, b2.created, "deduplicated blob should keep original created");
+
+        // Only one row in db
+        let got = store.get_blob(b1.id.clone()).await.unwrap().unwrap();
+        assert_eq!(got.id, b1.id);
+    }
+
+    #[tokio::test]
+    async fn blob_different_content_different_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        let b1 = store.insert_blob(b"content-a".to_vec(), 1_000).await.unwrap();
+        let b2 = store.insert_blob(b"content-b".to_vec(), 1_000).await.unwrap();
+        assert_ne!(b1.id, b2.id);
+        assert_ne!(b1.sha256, b2.sha256);
+    }
+
+    #[tokio::test]
+    async fn blob_get_nonexistent_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+        let got = store.get_blob("nonexistent".into()).await.unwrap();
+        assert!(got.is_none());
     }
 }
