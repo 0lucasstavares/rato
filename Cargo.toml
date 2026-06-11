@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rat-client",
     "crates/rat-core",
+    "crates/rat-policy",
     "crates/rat-proto",
     "crates/rat-store",
     "crates/rat-sensors",
