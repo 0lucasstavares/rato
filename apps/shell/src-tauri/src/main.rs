@@ -93,14 +93,13 @@ fn main() {
                 });
                 let pos = saved.or_else(|| {
                     avatar.primary_monitor().ok().flatten().map(|monitor| {
-                        let size = monitor.size();
-                        let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
-                            width: 200,
-                            height: 240,
-                        });
+                        let wa = monitor.work_area();
+                        // configured height, NOT outer_size(): the window isn't realized
+                        // yet during setup and reports a stale pre-map geometry.
+                        const WIN_H: i32 = 240;
                         AvatarPos {
-                            x: monitor.position().x + 16,
-                            y: monitor.position().y + size.height as i32 - outer.height as i32,
+                            x: wa.position.x + 16,
+                            y: wa.position.y + wa.size.height as i32 - WIN_H,
                         }
                     })
                 });
@@ -112,7 +111,10 @@ fn main() {
                     std::thread::spawn(move || {
                         for delay_ms in [300u64, 1000] {
                             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                            let _ = av.set_position(PhysicalPosition { x: p.x, y: p.y });
+                            let av2 = av.clone();
+                            let _ = av.run_on_main_thread(move || {
+                                let _ = av2.set_position(PhysicalPosition { x: p.x, y: p.y });
+                            });
                         }
                     });
                 }
