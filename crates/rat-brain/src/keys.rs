@@ -29,16 +29,24 @@ fn provider_name(p: &Provider) -> &'static str {
     }
 }
 
+/// Retrieve the API key for a provider from the environment variable.
+///
+/// Returns None if the variable is not set or is empty.
+fn key_from_env(p: &Provider) -> Option<String> {
+    match std::env::var(env_var_name(p)) {
+        Ok(val) if !val.is_empty() => Some(val),
+        _ => None,
+    }
+}
+
 /// Get the API key for the given provider.
 ///
 /// Checks env override first (useful for tests/CI), then falls back to the
 /// system keyring (Secret Service on Linux).
 pub fn get_key(p: Provider) -> Result<String, LlmError> {
     // 1. env override
-    if let Ok(val) = std::env::var(env_var_name(&p)) {
-        if !val.is_empty() {
-            return Ok(val);
-        }
+    if let Some(val) = key_from_env(&p) {
+        return Ok(val);
     }
 
     // 2. keyring
@@ -108,24 +116,30 @@ mod tests {
 
     #[test]
     fn key_present_via_env() {
+        let key = env_var_name(&Provider::Anthropic);
+        env::remove_var(key);
+        env::set_var(key, "test-ant-key");
+        assert!(key_present(Provider::Anthropic));
+        env::remove_var(key);
+    }
+
+    #[test]
+    fn key_from_env_helper() {
         let key = env_var_name(&Provider::OpenAi);
         env::remove_var(key);
-        assert!(!key_present(Provider::OpenAi) || {
-            // if keyring happens to have it, that's also ok
-            true
-        });
-
-        env::set_var(key, "some-value");
-        assert!(key_present(Provider::OpenAi));
+        assert_eq!(key_from_env(&Provider::OpenAi), None);
+        env::set_var(key, "sk-test");
+        assert_eq!(key_from_env(&Provider::OpenAi), Some("sk-test".to_string()));
         env::remove_var(key);
     }
 
     #[test]
     fn missing_key_returns_error() {
-        // Remove env var; if keyring doesn't have a key either, should error
+        // Use a distinct provider to avoid keyring conflicts
         let key = env_var_name(&Provider::OpenRouter);
         env::remove_var(key);
-        // We can't guarantee keyring has no value, so just verify it doesn't panic
-        let _ = get_key(Provider::OpenRouter);
+        let result = get_key(Provider::OpenRouter);
+        // Assert the error is specifically MissingKey, not just any error
+        assert!(matches!(result, Err(LlmError::MissingKey(_))));
     }
 }

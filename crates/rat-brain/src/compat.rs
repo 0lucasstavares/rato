@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use crate::backend::{BackendConfig, ChatBackend, ChatRequest, ChatResponse, Provider, Role, Route};
 use crate::error::LlmError;
 
-const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api";
+const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_CRITIC_MODEL: &str = "openai/gpt-5.1";
 const DEFAULT_CHEAP_MODEL: &str = "openai/gpt-5-mini";
 
