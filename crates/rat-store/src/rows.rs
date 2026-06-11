@@ -15,7 +15,7 @@ pub struct Memory {
     pub confidence: f64,
     pub created: i64,
     pub updated: i64,
-    /// JSON array of event-id strings.
+    /// JSON array of observation.id values (the ids shown to + cited by the LLM), not events.event_id.
     pub source_event_ids: Value,
     pub archived: bool,
 }
@@ -27,7 +27,7 @@ pub struct NewMemory {
     pub title: String,
     pub body: String,
     pub confidence: f64,
-    /// JSON array of event-id strings.
+    /// JSON array of observation.id values (the ids shown to + cited by the LLM), not events.event_id.
     pub source_event_ids: Value,
 }
 

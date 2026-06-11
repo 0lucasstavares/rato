@@ -145,6 +145,7 @@ pub async fn hourly(
                 let title = format!("Session {}: {}", date_str, session.project_id);
 
                 // Add memory
+                // source_event_ids holds observation.id values (the ids shown to + cited by the LLM), not events.event_id
                 let source_event_ids = serde_json::json!(citations);
                 let _ = store
                     .add_memory(NewMemory {
@@ -246,6 +247,7 @@ pub async fn nightly(
                     Ok(resp) => {
                         let summary = resp.json["summary"].as_str().unwrap_or("").to_string();
                         let date_str = format_date_from_epoch_seconds(yesterday_start / 1000);
+                        // source_event_ids holds observation.id values (the ids shown to + cited by the LLM), not events.event_id
                         let _ = store.add_memory(NewMemory {
                             r#type: "day_summary".to_string(),
                             project_id: None,

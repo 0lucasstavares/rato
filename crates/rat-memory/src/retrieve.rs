@@ -67,14 +67,16 @@ pub async fn search(
     let ms_per_day = 86_400_000.0f64;
 
     // --- FTS ---
+    // malformed FTS5 query → empty list, not a hard error
     let fts_obs = store
         .fts_observations(params.query.clone(), 40)
         .await
-        .map_err(crate::MemoryError::Store)?;
+        .unwrap_or_default();
+    // malformed FTS5 query → empty list, not a hard error
     let fts_mem = store
         .fts_memories(params.query.clone(), 40)
         .await
-        .map_err(crate::MemoryError::Store)?;
+        .unwrap_or_default();
 
     // --- Vector ---
     let (vec_obs, vec_mem) = if let Some(embedder) = embedder {
@@ -185,7 +187,6 @@ mod tests {
     use rat_core::clock::FakeClock;
     use rat_store::store::Store;
     use rat_proto::NewObservation;
-    use rat_store::rows::NewMemory;
     use tempfile::tempdir;
 
     #[test]
@@ -354,7 +355,29 @@ mod tests {
         assert_eq!(hit.kind, HitKind::Observation);
     }
 
-    // Suppress unused import warnings in tests
-    #[allow(unused_imports)]
-    use rat_store::rows::NewMemory as _NewMemory;
+    #[tokio::test]
+    async fn search_malformed_fts5_query_no_panic() {
+        let tmp = tempdir().unwrap();
+        let clock: Arc<dyn Clock> = FakeClock::at(86_400_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // Add an observation
+        store.add_observation(NewObservation {
+            kind: "shell_cmd".into(),
+            content: "cargo build".into(),
+            project_id: Some("p1".into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        // Search with malformed FTS5 query (unbalanced quotes)
+        let result = search(
+            &store,
+            None,
+            &clock,
+            SearchParams { query: "\"unbalanced".into(), project_id: Some("p1".into()), n: 10 },
+        ).await;
+
+        // Must return Ok (no panic), result may be empty or partial
+        assert!(result.is_ok(), "malformed query should degrade gracefully, not panic");
+    }
 }
