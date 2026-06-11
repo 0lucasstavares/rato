@@ -94,7 +94,7 @@
 
 <style>
   .avatar-root {
-    width: 180px;
+    width: 200px;
     height: 240px;
     position: relative;
     display: flex;

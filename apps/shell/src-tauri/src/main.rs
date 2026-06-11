@@ -95,7 +95,7 @@ fn main() {
                     avatar.primary_monitor().ok().flatten().map(|monitor| {
                         let size = monitor.size();
                         let outer = avatar.outer_size().unwrap_or(tauri::PhysicalSize {
-                            width: 180,
+                            width: 200,
                             height: 240,
                         });
                         AvatarPos {
@@ -106,11 +106,25 @@ fn main() {
                 });
                 if let Some(p) = pos {
                     let _ = avatar.set_position(PhysicalPosition { x: p.x, y: p.y });
+                    // mutter ignores pre-map positioning and applies its own placement
+                    // once the window maps — re-assert ours shortly after.
+                    let av = avatar.clone();
+                    std::thread::spawn(move || {
+                        for delay_ms in [300u64, 1000] {
+                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                            let _ = av.set_position(PhysicalPosition { x: p.x, y: p.y });
+                        }
+                    });
                 }
-                // persist drags so the next launch reopens where the operator left him
-                avatar.on_window_event(|event| {
+                // persist drags so the next launch reopens where the operator left him;
+                // ignore the first 1.5s of Moved events — those are mutter's own
+                // placement + our re-assertions, not operator drags.
+                let started = std::time::Instant::now();
+                avatar.on_window_event(move |event| {
                     if let tauri::WindowEvent::Moved(p) = event {
-                        save_pos(AvatarPos { x: p.x, y: p.y });
+                        if started.elapsed() > std::time::Duration::from_millis(1500) {
+                            save_pos(AvatarPos { x: p.x, y: p.y });
+                        }
                     }
                 });
             }
