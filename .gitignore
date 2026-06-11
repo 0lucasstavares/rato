@@ -1,1 +1,4 @@
 /target
+
+# Session handoff (local only, not versioned)
+handoff.md
