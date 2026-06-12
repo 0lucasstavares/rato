@@ -6,6 +6,7 @@
   import Pushback from "./tabs/Pushback.svelte";
   import Workbench from "./tabs/Workbench.svelte";
   import Approvals from "./tabs/Approvals.svelte";
+  import Pins from "./tabs/Pins.svelte";
 
   let active = $state("Now");
 </script>
@@ -13,9 +14,9 @@
 <div class="dash hud-grunge">
   <header>
     <span class="logo">RATO</span>
-    <span class="sub">developer companion · M4 shell</span>
+    <span class="sub">developer companion · M5 shell</span>
   </header>
-  <TabBar tabs={["Now", "Pushback", "Workbench", "Approvals", "Sensors", "Settings"]} bind:active />
+  <TabBar tabs={["Now", "Pushback", "Workbench", "Approvals", "Pins", "Sensors", "Settings"]} bind:active />
   <main>
     {#if active === "Now"}
       <Now />
@@ -25,6 +26,8 @@
       <Workbench />
     {:else if active === "Approvals"}
       <Approvals />
+    {:else if active === "Pins"}
+      <Pins />
     {:else if active === "Sensors"}
       <Sensors />
     {:else}

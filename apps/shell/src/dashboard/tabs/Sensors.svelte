@@ -4,18 +4,22 @@
   import MeterBar from "../../ui/hud/MeterBar.svelte";
   import StatusChip from "../../ui/hud/StatusChip.svelte";
   import { fmtAgo, poll, rpc } from "../../lib/rpc";
-  import type { ModeState, RatEvent } from "../../lib/types";
+  import type { ModeState, Observation, PinDto, RatEvent } from "../../lib/types";
 
   const AWAY_MS = 15 * 60 * 1000;
 
   let mode = $state<ModeState | null>(null);
   let events = $state<RatEvent[]>([]);
+  let ocr = $state<Observation[]>([]);
+  let pins = $state<PinDto[]>([]);
   let stop: (() => void) | null = null;
 
   onMount(() => {
     stop = poll(async () => {
       mode = await rpc<ModeState>("mode.get");
       events = await rpc<RatEvent[]>("events.recent", { limit: 300 });
+      ocr = await rpc<Observation[]>("observations.recent", { limit: 20, kind: "ocr" });
+      pins = await rpc<PinDto[]>("pins.list");
     }, 5000);
   });
   onDestroy(() => stop?.());
@@ -45,7 +49,12 @@
       row("git", "git"),
       row("clipboard", "clipboard"),
       row("idle/mode", "idle"),
-      row("screen", "", "arrives in M5"),
+      ocr.length > 0
+        ? { name: "screen/OCR", led: "on", note: `${ocr.length} OCR observations · last ${fmtAgo(ocr[0].ts)} ago` }
+        : { name: "screen/OCR", led: "warn", note: "M5 capture loop armed · no OCR frames yet" },
+      pins.length > 0
+        ? { name: "ring pins", led: "on", note: `${pins.length} pinned capture(s)` }
+        : { name: "ring pins", led: "warn", note: "M5 encrypted ring ready · no pins yet" },
       row("microphone", "", "arrives in M6"),
     ];
   });
@@ -78,7 +87,7 @@
         <span class="dim">{s.note}</span>
       </div>
     {/each}
-    <div class="dim policy">all observation is read-only · no covert mode · raw buffers arrive in M5</div>
+    <div class="dim policy">all observation is read-only · no covert mode · M5 ring buffers are encrypted and pin-only</div>
   </HudPanel>
 </div>
 

@@ -16,7 +16,7 @@
 </script>
 
 <div class="col">
-  <HudPanel title="Daemon (read-only in M2)">
+  <HudPanel title="Daemon">
     {#if status}
       <table>
         <tbody>
@@ -30,11 +30,11 @@
       <span class="dim">daemon unreachable</span>
     {/if}
   </HudPanel>
-  <HudPanel title="Coming up">
+  <HudPanel title="Milestones">
     <ul class="dim">
-      <li>M3 — memory, retrieval, critic loop (LLM provider: OpenAI / Anthropic / OpenRouter)</li>
+      <li>M3 — memory, retrieval, critic loop</li>
       <li>M4 — tmux workbench, worktrees, approvals</li>
-      <li>M5 — screen OCR + encrypted ring buffer</li>
+      <li>M5 — screen OCR stubs, encrypted ring buffer, pins</li>
       <li>M6 — voice, wake words (rat / hey rat / rato / ei rato)</li>
     </ul>
   </HudPanel>

@@ -114,3 +114,15 @@ export interface PushbackDto {
   decided_at: number | null;
   latency_ms: number | null;
 }
+
+/** Wire DTO mirroring rat-proto PinDto / rat_store::rows::Pin */
+export interface PinDto {
+  id: string;
+  kind: string;
+  media: string;
+  path: string;
+  created: number;
+  expires_at: number | null;
+  reason: string;
+  meta: Record<string, unknown>;
+}
