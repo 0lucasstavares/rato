@@ -83,7 +83,47 @@ Verified live 2026-06-11 against an isolated daemon (sandbox `XDG_*` dirs) + scr
       expiry countdown, Approve/Deny; R3 card requires typing the slug to arm Approve; audit list below
 - [ ] 👁 avatar grip shows an amber `APR` chip while approvals are pending
 
-## M5 — Eyes / screen *(pending)*
+## M5 — Eyes / screen *(in progress)*
+
+Implementation status as of 2026-06-12: store pins, encrypted ring, trait-based vision pipeline,
+daemon capture-loop seam, pins RPC/CLI, and shell Pins tab are landed. Retention pruner,
+SensorGate health/doctor rows, Calendar tab, fuller Sensors metrics, final acceptance docs, and
+the `m5-eyes` tag remain.
+
+Automated verification already green:
+
+- [x] ⚙ `cargo test --workspace` with workspace-owned `TMPDIR`/`XDG_DATA_HOME`:
+      `TMPDIR=~/rato/target/tmp XDG_DATA_HOME=~/rato/target/test-data cargo test --workspace`
+- [x] ⚙ `cargo check -p rat-daemon --features screencast,ocr`
+- [x] ⚙ `cd apps/shell && npm run check && npm run build`
+- [x] ⚙ ring crypto: seal/open round-trip; wrong key/AAD/tamper fail; nonce uniqueness;
+      fake-clock prune keeps only the bounded TTL window
+- [x] ⚙ vision pipeline: fake screen + fake/null OCR; dHash dedup; OCR deltas; JPEG output;
+      unavailable source returns no capture
+- [x] ⚙ auto-pin regex table: panic, stack trace, Rust `error[E...]`, exception, and FAILED
+      patterns match; benign text does not
+- [x] ⚙ daemon capture tick with `FakeScreenSource`/`FakeOcr` writes a ring segment and inserts
+      a searchable `ocr` observation through the normal observation/FTS path
+- [x] ⚙ `pins.pin_recent/list/unpin` RPC round-trips over a seeded ring and removes both row
+      and pin directory on unpin
+- [x] ⚙ `rat pins`, `rat pins pin-recent --minutes N --media screen`, and
+      `rat pins unpin <id>` are covered by CLI tests
+- [x] 👁 shell Pins tab exists and can call `pins.list`, `pins.pin_recent`, and `pins.unpin`
+
+Remaining M5 acceptance:
+
+- [ ] ⚙ retention pruner: never deletes cited observations, summaries, audit rows, or manual pins;
+      deletes uncited observations older than 180 d and expired auto-pins; processes batches ≤5k
+- [ ] ⚙ clock-skew test: auto-pin created before a clock jump past expiry is expired and files are
+      unlinked; manual pin survives
+- [ ] ⚙ `rat doctor` reports screen/OCR availability, ring directory, and pin count
+- [ ] 👁 Sensors tab shows ring occupancy, last prune counts/time, and pin-last-N control
+- [ ] 👁 Calendar tab shows session timeline with events/observations/agent runs/approvals/pins
+- [ ] 👁 live smoke with `--features screencast,ocr`: grant portal consent, confirm real OCR
+      observations appear in `rat search`, pin last 5 min, verify pin files exist
+- [ ] 👁 24 h soak: CPU <8 % average, ring bounded to 20 min, no unbounded pin/ring growth
+- [ ] ⚙ update docs and tag `m5-eyes`
+
 ## M6 — Voice *(pending)*
 ## M7 — Polish *(pending)*
 ## M8 — Hardening *(pending)*
