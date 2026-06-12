@@ -116,7 +116,7 @@ enum Cmd {
     // v4 — project lookup by id
     GetProjectById { id: String, reply: Reply<Option<Project>> },
     // v5 — pins
-    InsertPin { new_pin: NewPin, reply: Reply<Pin> },
+    InsertPin { id: Option<String>, new_pin: NewPin, reply: Reply<Pin> },
     ListPins { reply: Reply<Vec<Pin>> },
     GetPin { id: String, reply: Reply<Option<Pin>> },
     ExpirePins { now_ms: i64, reply: Reply<Vec<Pin>> },
@@ -655,7 +655,15 @@ impl Store {
     pub async fn insert_pin(&self, new_pin: NewPin) -> Result<Pin, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertPin { new_pin, reply: rtx })
+            .send(Cmd::InsertPin { id: None, new_pin, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn insert_pin_with_id(&self, id: String, new_pin: NewPin) -> Result<Pin, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertPin { id: Some(id), new_pin, reply: rtx })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -849,8 +857,8 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
                 let _ = reply.send(do_get_project_by_id(&conn, &id));
             }
             // v5 — pins
-            Cmd::InsertPin { new_pin, reply } => {
-                let _ = reply.send(do_insert_pin(&conn, clock.as_ref(), new_pin));
+            Cmd::InsertPin { id, new_pin, reply } => {
+                let _ = reply.send(do_insert_pin(&conn, clock.as_ref(), id, new_pin));
             }
             Cmd::ListPins { reply } => {
                 let _ = reply.send(do_list_pins(&conn));
@@ -2147,9 +2155,14 @@ fn tuple_to_pin(t: PinRow) -> Result<Pin, StoreError> {
 const PIN_SELECT: &str =
     "SELECT id, kind, media, path, created, expires_at, reason, meta FROM pins";
 
-fn do_insert_pin(conn: &Connection, clock: &dyn Clock, np: NewPin) -> Result<Pin, StoreError> {
+fn do_insert_pin(
+    conn: &Connection,
+    clock: &dyn Clock,
+    id: Option<String>,
+    np: NewPin,
+) -> Result<Pin, StoreError> {
     let p = Pin {
-        id: new_id(),
+        id: id.unwrap_or_else(new_id),
         kind: np.kind,
         media: np.media,
         path: np.path,

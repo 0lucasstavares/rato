@@ -37,6 +37,13 @@ impl RingKey {
         use rand::RngCore;
         let mut bytes = [0u8; 32];
         OsRng.fill_bytes(&mut bytes);
+        Self::from_bytes(bytes)
+    }
+
+    /// Build a key from existing 32-byte material.
+    ///
+    /// Used for persistent pin encryption keys loaded from Secret Service.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         let mlocked = try_mlock(bytes.as_ptr(), bytes.len());
         Self { mlocked, bytes }
     }
@@ -91,7 +98,10 @@ fn try_munlock(ptr: *const u8, len: usize) {
 pub fn seal(key: &RingKey, plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
     let cipher = XChaCha20Poly1305::new(key.as_bytes().into());
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-    let payload = Payload { msg: plaintext, aad };
+    let payload = Payload {
+        msg: plaintext,
+        aad,
+    };
     // encrypt_in_place_detached not needed; just use encrypt which appends the
     // 16-byte Poly1305 tag.
     let ciphertext = cipher
@@ -112,7 +122,10 @@ pub fn open(key: &RingKey, sealed: &[u8], aad: &[u8]) -> Result<Vec<u8>, RingErr
     let (nonce_bytes, ciphertext) = sealed.split_at(NONCE_LEN);
     let nonce = XNonce::from_slice(nonce_bytes);
     let cipher = XChaCha20Poly1305::new(key.as_bytes().into());
-    let payload = Payload { msg: ciphertext, aad };
+    let payload = Payload {
+        msg: ciphertext,
+        aad,
+    };
     cipher
         .decrypt(nonce, payload)
         .map_err(|_| RingError::DecryptFailed)
@@ -170,6 +183,9 @@ mod tests {
     #[test]
     fn open_too_short_returns_error() {
         let key = RingKey::ephemeral();
-        assert!(matches!(open(&key, &[0u8; 5], b""), Err(RingError::TooShort)));
+        assert!(matches!(
+            open(&key, &[0u8; 5], b""),
+            Err(RingError::TooShort)
+        ));
     }
 }

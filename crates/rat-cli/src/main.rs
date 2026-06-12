@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use rat_proto::{
     methods, AgentRunDto, ApprovalDto, Event, HitDto, ModeState, NewEvent, Observation, Project,
-    PushbackDto, WorkSession, WorkbenchMergeBackParams,
+    PinDto, PushbackDto, WorkSession, WorkbenchMergeBackParams,
 };
 
 /// RATO control CLI.
@@ -119,6 +119,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: Option<ApprovalsCmd>,
     },
+    /// Show and manage screen/audio/clipboard pins
+    Pins {
+        #[command(subcommand)]
+        cmd: Option<PinsCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -165,6 +170,21 @@ enum ApprovalsCmd {
         note: Option<String>,
         #[arg(long)]
         slug: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PinsCmd {
+    /// Pin recent ring-buffer segments
+    PinRecent {
+        #[arg(long, default_value_t = 5)]
+        minutes: u32,
+        #[arg(long, default_value = "screen", value_parser = ["screen", "audio", "clipboard"])]
+        media: String,
+    },
+    /// Remove a pin and its files
+    Unpin {
+        id: String,
     },
 }
 
@@ -500,6 +520,34 @@ async fn main() -> anyhow::Result<()> {
                 })).await?,
             )?;
             println!("{} → {}", approval.id, approval.status);
+        }
+        Cmd::Pins { cmd: None } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let pins: Vec<PinDto> =
+                serde_json::from_value(c.call(methods::PINS_LIST, Value::Null).await?)?;
+            if pins.is_empty() {
+                println!("(no pins)");
+            }
+            for p in pins {
+                let expiry = p.expires_at.map(|ts| ts.to_string()).unwrap_or_else(|| "manual".to_string());
+                println!("{} [{:<6}] {:<9} expires={} {}", p.id, p.kind, p.media, expiry, p.reason);
+            }
+        }
+        Cmd::Pins { cmd: Some(PinsCmd::PinRecent { minutes, media }) } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let pin: PinDto = serde_json::from_value(
+                c.call(
+                    methods::PINS_PIN_RECENT,
+                    serde_json::json!({ "minutes": minutes, "media": media }),
+                )
+                .await?,
+            )?;
+            println!("{} {} {}", pin.id, pin.media, pin.path);
+        }
+        Cmd::Pins { cmd: Some(PinsCmd::Unpin { id }) } => {
+            let mut c = client::Client::connect(&socket).await?;
+            c.call(methods::PINS_UNPIN, serde_json::json!({ "id": id })).await?;
+            println!("unpinned");
         }
     }
     Ok(())

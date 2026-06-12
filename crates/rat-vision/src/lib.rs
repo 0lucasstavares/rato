@@ -1,5 +1,9 @@
 pub mod autopin;
 pub mod dhash;
 pub mod ocr;
+#[cfg(feature = "ocr")]
+pub mod ocr_tesseract;
 pub mod pipeline;
 pub mod screen;
+#[cfg(feature = "screencast")]
+pub mod screen_portal;

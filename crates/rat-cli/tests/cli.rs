@@ -37,6 +37,7 @@ fn start_daemon(tmp: &Path) -> PathBuf {
                 embedder: None,
                 llm_status: rat_daemon::server::LlmStatusState::disabled(),
                 task_runner,
+                pins: None,
             });
             let listener = tokio::net::UnixListener::bind(&socket2).unwrap();
             rat_daemon::server::serve(listener, ctx).await;
@@ -97,6 +98,7 @@ fn emit_shell_flows_into_projects_sessions_and_observations() {
     let sock = socket.to_str().unwrap();
     let repo = tmp.path().join("webapp");
     std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
     Command::cargo_bin("rat")
         .unwrap()

@@ -7,7 +7,7 @@ use rat_proto::{
     WorkbenchStartParams, WorkbenchTailParams, errcodes, methods, HelloParams, HelloResult, HitDto,
     LlmKeyPresence, LlmStatusResult, MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto,
     PushbackFeedbackParams, PushbacksRecentParams, RecentParams, Request, Response, StatusResult,
-    PROTO_VERSION,
+    PinDto, PinsPinRecentParams, PinsUnpinParams, PROTO_VERSION,
 };
 use rat_policy::{requires_slug, risk_tier, ActionKind, RiskOutcome};
 use rat_workbench::runner::TaskRunner;
@@ -23,6 +23,7 @@ use rat_store::store::Store;
 
 use crate::ingest::Ingest;
 use crate::mode::ModeManager;
+use crate::pins::{media_from_str, PinKind, PinService};
 
 /// Shared LLM/critic status, readable via the `llm.status` RPC method.
 pub struct LlmStatusState {
@@ -62,6 +63,7 @@ pub struct ServerCtx {
     pub embedder: Option<EmbeddingClient>,
     pub llm_status: Arc<LlmStatusState>,
     pub task_runner: TaskRunner,
+    pub pins: Option<PinService>,
 }
 
 /// Accept loop. Runs until the task is dropped.
@@ -528,6 +530,52 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             }
         }
+        methods::PINS_LIST => {
+            let Some(service) = &ctx.pins else {
+                return Response::err(req.id, errcodes::INTERNAL, "pin service unavailable");
+            };
+            match service.list().await {
+                Ok(pins) => {
+                    let dtos: Vec<PinDto> = pins.into_iter().map(pin_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::PINS_PIN_RECENT => {
+            let Some(service) = &ctx.pins else {
+                return Response::err(req.id, errcodes::INTERNAL, "pin service unavailable");
+            };
+            let params: PinsPinRecentParams = if req.params.is_null() {
+                PinsPinRecentParams { media: "screen".into(), minutes: 5 }
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                }
+            };
+            let media = match media_from_str(&params.media) {
+                Ok(m) => m,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
+            };
+            match service.pin_recent(media, params.minutes, PinKind::Manual, "manual pin_recent").await {
+                Ok(pin) => Response::ok(req.id, serde_json::to_value(pin_to_dto(pin)).expect("serializes")),
+                Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
+            }
+        }
+        methods::PINS_UNPIN => {
+            let Some(service) = &ctx.pins else {
+                return Response::err(req.id, errcodes::INTERNAL, "pin service unavailable");
+            };
+            let params: PinsUnpinParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+            };
+            match service.unpin(&params.id).await {
+                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
+            }
+        }
         other => {
             Response::err(req.id, errcodes::METHOD_NOT_FOUND, format!("unknown method: {other}"))
         }
@@ -592,5 +640,18 @@ fn approval_to_dto(a: rat_store::rows::Approval) -> ApprovalDto {
         decided_via: a.decided_via,
         decision_note: a.decision_note,
         execution: a.execution,
+    }
+}
+
+fn pin_to_dto(p: rat_store::rows::Pin) -> PinDto {
+    PinDto {
+        id: p.id,
+        kind: p.kind,
+        media: p.media,
+        path: p.path,
+        created: p.created,
+        expires_at: p.expires_at,
+        reason: p.reason,
+        meta: p.meta,
     }
 }

@@ -150,6 +150,7 @@ mod tests {
                         embedder: None,
                         llm_status: LlmStatusState::disabled(),
                         task_runner,
+                        pins: None,
                     });
                     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
                     ready_tx.send(()).unwrap();

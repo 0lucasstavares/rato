@@ -19,15 +19,23 @@ rat-brain = { path = "../rat-brain" }
 rat-memory = { path = "../rat-memory" }
 rat-workbench = { path = "../rat-workbench" }
 rat-policy = { path = "../rat-policy" }
+rat-ring = { path = "../rat-ring" }
+rat-vision = { path = "../rat-vision" }
 anyhow = { workspace = true }
 async-trait = "0.1"
 clap = { workspace = true }
+rand = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 toml = "0.8"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[features]
+default = []
+screencast = ["rat-vision/screencast"]
+ocr = ["rat-vision/ocr"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

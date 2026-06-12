@@ -3,6 +3,11 @@ name = "rat-vision"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+screencast = []
+ocr = []
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rat-core = { path = "../rat-core" }

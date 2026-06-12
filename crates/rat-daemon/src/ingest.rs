@@ -122,12 +122,19 @@ impl Ingest {
 fn find_git_root(start: &Path) -> Option<PathBuf> {
     let mut dir = start;
     for _ in 0..20 {
-        if dir.join(".git").exists() {
+        if is_git_worktree_marker(&dir.join(".git")) {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
     }
     None
+}
+
+fn is_git_worktree_marker(path: &Path) -> bool {
+    if path.is_file() {
+        return true;
+    }
+    path.is_dir() && path.join("HEAD").is_file()
 }
 
 fn derive_observation(event: &Event) -> Option<NewObservation> {
@@ -177,6 +184,7 @@ mod tests {
         let ingest = Ingest::new(store, clock.clone(), Sessionizer::new(DEFAULT_GAP_MS));
         let repo = tmp.join("myproj");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
         let sub = repo.join("src/deep");
         std::fs::create_dir_all(&sub).unwrap();
         (ingest, clock, repo)
@@ -229,10 +237,10 @@ mod tests {
     async fn cwd_outside_any_repo_stores_event_without_project() {
         let tmp = tempfile::tempdir().unwrap();
         let (ingest, _clock, _repo) = setup(tmp.path()).await;
-        let outside = tmp.path().join("nowhere");
-        std::fs::create_dir_all(&outside).unwrap();
+        let outside_tmp = tempfile::tempdir_in("/tmp").unwrap();
+        let outside = outside_tmp.path();
 
-        let ev = ingest.ingest(shell_cmd("echo hi", &outside)).await.unwrap().unwrap();
+        let ev = ingest.ingest(shell_cmd("echo hi", outside)).await.unwrap().unwrap();
         assert!(ev.project_id.is_none());
         assert_eq!(ingest.store.open_sessions().await.unwrap().len(), 0);
         // observation still derived

@@ -14,16 +14,19 @@ use rat_brain::keys;
 use rat_brain::critic::Critic;
 use rat_core::clock::{Clock, SystemClock};
 use rat_core::paths;
+use rat_daemon::capture::run_capture_tick;
 use rat_daemon::config::Config;
 use rat_daemon::ingest::Ingest;
 use rat_daemon::memory_searcher::DaemonMemorySearcher;
 use rat_daemon::mode::{self, ModeManager};
+use rat_daemon::pins::{KeyringPinKeyStore, PinService};
 use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
 use rat_workbench::runner::TaskRunner;
 use rat_workbench::tmux::Tmux;
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_memory::embed::EmbeddingClient;
 use rat_proto::NewEvent;
+use rat_ring::{RingKey, RingWriter};
 use rat_sensors::gitwatch::{self, HeadState};
 use rat_sensors::proc::{proc_detail, scan_procs, ProcWatcher, ALLOWLIST};
 use rat_store::store::Store;
@@ -319,6 +322,30 @@ async fn main() -> anyhow::Result<()> {
 
     let task_runner = TaskRunner::new(store.clone(), Tmux::new("rato"), clock.clone());
 
+    let ring_dir = paths::state_dir().join("ring");
+    let pins_dir = paths::data_dir().join("pins");
+    paths::ensure_private_dir(&ring_dir).context("creating ring state dir")?;
+    paths::ensure_private_dir(&pins_dir).context("creating pins data dir")?;
+    let ring_key = Arc::new(RingKey::ephemeral());
+    let screen_ring = Arc::new(RingWriter {
+        dir: ring_dir,
+        segment_secs: 10,
+        ttl_secs: 20 * 60,
+        clock: clock.clone(),
+    });
+    let pin_service = PinService::new(
+        store.clone(),
+        screen_ring.clone(),
+        ring_key.clone(),
+        Arc::new(KeyringPinKeyStore),
+        pins_dir,
+        clock.clone(),
+    );
+
+    if !args.no_sensors {
+        spawn_capture_loop(store.clone(), screen_ring.clone(), ring_key.clone(), pin_service.clone());
+    }
+
     // Approval expiry sweep: expire pending approvals every 60s
     {
         let store_exp = store.clone();
@@ -372,6 +399,7 @@ async fn main() -> anyhow::Result<()> {
         embedder,
         llm_status,
         task_runner,
+        pins: Some(pin_service),
     });
 
     tokio::select! {
@@ -492,6 +520,40 @@ fn spawn_sensors(store: Store, ingest: Arc<Ingest>, mode: Arc<ModeManager>, cloc
 
     // idle probe → away mode
     tokio::spawn(mode::run(mode, ingest, clock));
+}
+
+fn spawn_capture_loop(
+    store: Store,
+    ring: Arc<RingWriter>,
+    ring_key: Arc<RingKey>,
+    pins: PinService,
+) {
+    tokio::spawn(async move {
+        #[cfg(feature = "screencast")]
+        let source = rat_vision::screen_portal::PortalScreenSource::new();
+        #[cfg(not(feature = "screencast"))]
+        let source = rat_vision::screen::FakeScreenSource::new(vec![]);
+
+        #[cfg(feature = "ocr")]
+        let ocr = rat_vision::ocr_tesseract::TesseractOcr::new();
+        #[cfg(not(feature = "ocr"))]
+        let ocr = rat_vision::ocr::NullOcr;
+
+        let mut pipeline = rat_vision::pipeline::CapturePipeline::new(source, ocr);
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Err(e) =
+                run_capture_tick(&mut pipeline, ring.as_ref(), ring_key.as_ref(), &store, Some(&pins)).await
+            {
+                tracing::warn!("capture tick failed: {e}");
+            }
+            if let Err(e) = ring.prune() {
+                tracing::debug!("ring prune failed: {e}");
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

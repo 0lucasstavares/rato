@@ -18,8 +18,19 @@ pub fn socket_path() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     match std::env::var_os("XDG_DATA_HOME") {
         Some(d) => PathBuf::from(d).join("rato"),
-        None => PathBuf::from(std::env::var_os("HOME").expect("HOME not set"))
-            .join(".local/share/rato"),
+        None => {
+            PathBuf::from(std::env::var_os("HOME").expect("HOME not set")).join(".local/share/rato")
+        }
+    }
+}
+
+/// $XDG_STATE_HOME/rato, falling back to ~/.local/state/rato.
+pub fn state_dir() -> PathBuf {
+    match std::env::var_os("XDG_STATE_HOME") {
+        Some(d) => PathBuf::from(d).join("rato"),
+        None => {
+            PathBuf::from(std::env::var_os("HOME").expect("HOME not set")).join(".local/state/rato")
+        }
     }
 }
 
@@ -50,5 +61,10 @@ mod tests {
     #[test]
     fn db_lives_under_data_dir() {
         assert!(db_path().ends_with("rato/rato.db"));
+    }
+
+    #[test]
+    fn state_lives_under_state_dir() {
+        assert!(state_dir().ends_with("rato"));
     }
 }

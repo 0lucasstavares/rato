@@ -23,6 +23,9 @@ pub mod methods {
     pub const APPROVALS_PENDING: &str = "approvals.pending";
     pub const APPROVALS_DECIDE: &str = "approvals.decide";
     pub const WORKBENCH_MERGE_BACK: &str = "workbench.merge_back";
+    pub const PINS_PIN_RECENT: &str = "pins.pin_recent";
+    pub const PINS_LIST: &str = "pins.list";
+    pub const PINS_UNPIN: &str = "pins.unpin";
 }
 
 pub mod errcodes {
@@ -342,6 +345,40 @@ pub struct ApprovalsDecideParams {
     pub note: Option<String>,
     #[serde(default)]
     pub slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PinsPinRecentParams {
+    #[serde(default = "default_screen_media")]
+    pub media: String,
+    #[serde(default = "default_pin_minutes")]
+    pub minutes: u32,
+}
+
+fn default_screen_media() -> String {
+    "screen".to_string()
+}
+
+fn default_pin_minutes() -> u32 {
+    5
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PinsUnpinParams {
+    pub id: String,
+}
+
+/// Wire DTO mirroring `rat_store::rows::Pin`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PinDto {
+    pub id: String,
+    pub kind: String,
+    pub media: String,
+    pub path: String,
+    pub created: i64,
+    pub expires_at: Option<i64>,
+    pub reason: String,
+    pub meta: serde_json::Value,
 }
 
 #[cfg(test)]

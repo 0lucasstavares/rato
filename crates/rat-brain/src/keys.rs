@@ -83,6 +83,26 @@ pub fn set_key(p: Provider, value: &str) -> Result<(), LlmError> {
     })
 }
 
+/// Get an arbitrary RATO secret from Secret Service.
+pub fn get_secret(account: &str) -> Result<String, LlmError> {
+    let account = account.to_string();
+    off_runtime(move || match keyring::Entry::new(keyring_service(), &account) {
+        Ok(entry) => entry.get_password().map_err(|_| LlmError::MissingKey(account)),
+        Err(_) => Err(LlmError::MissingKey(account)),
+    })
+}
+
+/// Store an arbitrary RATO secret in Secret Service.
+pub fn set_secret(account: &str, value: &str) -> Result<(), LlmError> {
+    let account = account.to_string();
+    let value = value.to_string();
+    off_runtime(move || {
+        let entry = keyring::Entry::new(keyring_service(), &account)
+            .map_err(|_| LlmError::MissingKey(account.clone()))?;
+        entry.set_password(&value).map_err(|_| LlmError::MissingKey(account))
+    })
+}
+
 /// Check whether a key is available (env or keyring), without erroring.
 pub fn key_present(p: Provider) -> bool {
     // env override

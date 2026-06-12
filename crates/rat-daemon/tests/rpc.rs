@@ -6,9 +6,11 @@ use std::time::Instant;
 use rat_core::clock::{Clock, FakeClock, SystemClock};
 use rat_daemon::ingest::Ingest;
 use rat_daemon::mode::ModeManager;
+use rat_daemon::pins::{PinKeyStore, PinService};
 use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_proto::{errcodes, Response, PROTO_VERSION};
+use rat_ring::{Media, RingKey, RingWriter};
 use rat_store::store::Store;
 use rat_workbench::runner::TaskRunner;
 use rat_workbench::tmux::Tmux;
@@ -42,6 +44,7 @@ async fn start_with_store() -> (tempfile::TempDir, PathBuf, Store) {
         embedder: None,
         llm_status: LlmStatusState::disabled(),
         task_runner,
+        pins: None,
     });
     let listener = UnixListener::bind(&socket).unwrap();
     tokio::spawn(serve(listener, ctx));
@@ -56,6 +59,14 @@ async fn start() -> (tempfile::TempDir, PathBuf) {
 struct TestClient {
     lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
     w: tokio::net::unix::OwnedWriteHalf,
+}
+
+struct StaticPinKeyStore([u8; 32]);
+
+impl PinKeyStore for StaticPinKeyStore {
+    fn load_or_create(&self) -> anyhow::Result<[u8; 32]> {
+        Ok(self.0)
+    }
 }
 
 impl TestClient {
@@ -129,6 +140,7 @@ async fn shell_cmd_flows_into_projects_sessions_observations_via_rpc() {
     // a fake repo for project attribution
     let repo = tmp.path().join("acme");
     std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
     let mut c = TestClient::connect(&socket).await;
     c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
@@ -220,6 +232,70 @@ async fn approvals_pending_empty() {
     assert!(resp.error.is_none());
     let approvals = resp.result.unwrap();
     assert!(approvals.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn pins_rpc_pin_recent_list_unpin_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = tmp.path().join("ratd.sock");
+    let db = tmp.path().join("rato.db");
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let store = Store::open(&db, clock.clone()).unwrap();
+    let ingest = Arc::new(Ingest::new(store.clone(), clock.clone(), Sessionizer::new(DEFAULT_GAP_MS)));
+    let mode = Arc::new(ModeManager::new(0));
+    let task_runner = TaskRunner::new(store.clone(), Tmux::new(unique_tmux_socket()), clock.clone());
+    let ring_key = Arc::new(RingKey::ephemeral());
+    let ring = Arc::new(RingWriter {
+        dir: tmp.path().join("ring"),
+        segment_secs: 10,
+        ttl_secs: 1_200,
+        clock: clock.clone(),
+    });
+    ring.write_segment(Media::Screen, b"captured jpeg bytes", &ring_key).unwrap();
+    let pins = PinService::new(
+        store.clone(),
+        ring,
+        ring_key,
+        Arc::new(StaticPinKeyStore([3u8; 32])),
+        tmp.path().join("pins"),
+        clock,
+    );
+    let ctx = Arc::new(ServerCtx {
+        store,
+        ingest,
+        mode,
+        started: Instant::now(),
+        db_path: db,
+        clock: Arc::new(SystemClock),
+        embedder: None,
+        llm_status: LlmStatusState::disabled(),
+        task_runner,
+        pins: Some(pins),
+    });
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(serve(listener, ctx));
+
+    let mut c = TestClient::connect(&socket).await;
+    c.send(json!({"id": 1, "method": "hello", "params": {"proto_version": PROTO_VERSION}})).await;
+    let pinned = c
+        .send(json!({"id": 2, "method": "pins.pin_recent", "params": {"media": "screen", "minutes": 5}}))
+        .await;
+    assert!(pinned.error.is_none(), "pin_recent should succeed: {:?}", pinned.error);
+    let pin = pinned.result.unwrap();
+    let pin_id = pin["id"].as_str().unwrap().to_string();
+    let pin_path = std::path::PathBuf::from(pin["path"].as_str().unwrap());
+    assert!(pin_path.is_dir());
+
+    let listed = c.send(json!({"id": 3, "method": "pins.list"})).await.result.unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+
+    let unpinned = c
+        .send(json!({"id": 4, "method": "pins.unpin", "params": {"id": pin_id}}))
+        .await;
+    assert!(unpinned.error.is_none(), "unpin should succeed: {:?}", unpinned.error);
+    assert!(!pin_path.exists());
+    let listed = c.send(json!({"id": 5, "method": "pins.list"})).await.result.unwrap();
+    assert!(listed.as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -432,6 +508,7 @@ async fn start_with_unique_socket(
         embedder: None,
         llm_status: LlmStatusState::disabled(),
         task_runner,
+        pins: None,
     });
     let listener = UnixListener::bind(&socket).unwrap();
     tokio::spawn(serve(listener, ctx));
