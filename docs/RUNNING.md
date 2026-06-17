@@ -24,6 +24,46 @@ cargo build --release --manifest-path apps/shell/src-tauri/Cargo.toml   # shell 
 
 Binaries land at `target/release/{ratd,rat}` and `apps/shell/src-tauri/target/release/rato-shell`.
 
+## Docker Compose
+
+Compose runs the daemon and exposes a matching `rat` CLI container. The default container daemon
+uses explicit container paths and disables desktop sensors/critic because clipboard, portal, and
+Secret Service access are host-session integrations.
+
+```bash
+mkdir -p target/compose-run/{config,data,run/rato,state}
+docker compose build
+docker compose up -d ratd
+docker compose run --rm rat status
+docker compose run --rm rat doctor
+docker compose logs -f ratd
+docker compose down
+```
+
+Persistent state lives under `target/compose-run/`. The daemon listens on
+`/run/rato/ratd.sock` in the container. The host-visible socket is
+`target/compose-run/run/rato/ratd.sock`.
+
+To show the desktop rat while using the Compose daemon, run the shell on the host and point it at
+that socket:
+
+```bash
+RAT_SOCKET="$PWD/target/compose-run/run/rato/ratd.sock" \
+  apps/shell/src-tauri/target/release/rato-shell
+```
+
+## Development shell
+
+The shell frontend uses Vite on `http://localhost:19773` in dev mode. This avoids Vite's
+common default port (`5173`) and keeps Tauri's `devUrl` stable.
+
+```bash
+cd ~/rato/apps/shell
+npm run dev
+# in another terminal, if using the Tauri dev runner:
+npm run tauri dev
+```
+
 Optional M5 hardware backends are feature-gated. The default build is deterministic and uses
 fake/null screen/OCR backends. Operator live-smoke build:
 
@@ -81,10 +121,11 @@ Notes:
 | Events/observations | `rat events`, `rat observations [--kind shell_cmd]` |
 | Search memory | `rat search "query"` |
 | Pushbacks | `rat pushbacks` / `rat pushbacks feedback <id> <useful|dismiss|snooze>` |
-| Workbench tasks | `rat task start --project <repo> --title <t> [--adapter fakeagent\|claude-code\|codex]`; `rat task list`; `rat task tail <run_id>` |
+| Workbench tasks | `rat task start --project <repo> --title <t> [--adapter fakeagent\|claude-code\|codex] [--executor local\|docker --docker-image <image>]`; `rat task list`; `rat task tail <run_id>` |
 | Merge back | `rat task merge-back <run_id>` → creates an approval; review and approve it |
 | Approvals | `rat approvals`; `rat approvals decide <id> approve\|deny [--note <n>] [--slug <s>]` |
 | Capture pins | `rat pins`; `rat pins pin-recent --minutes 5 --media screen`; `rat pins unpin <id>` |
+| Voice | `rat voice status`; `rat voice say "hello"`; `rat utterances` |
 | Logs | `journalctl --user -u ratd -f` |
 | Stop everything | `systemctl --user stop ratd rato-shell` |
 
@@ -97,6 +138,7 @@ approve a merge-back.
 
 ```bash
 rat task start --project ~/code/myproj --title "add retry logic"   # default adapter: fakeagent
+rat task start --project ~/code/myproj --title "fix tests" --adapter codex --executor docker --docker-image rato-codex:latest
 rat task list                                                      # running → done
 rat task tail <run_id>                                             # captured agent output
 rat task merge-back <run_id>                                       # → R2 approval (slug = last 6 of id)
@@ -107,10 +149,33 @@ rat approvals decide <approval_id> approve                         # git merge -
 
 - **Adapters:** `fakeagent` (deterministic test agent), `claude-code` (`claude` on PATH),
   `codex` (`codex` on PATH). Real-adapter transcript parsing + interactive panes land in M7.
+- **Executors:** `local` runs the adapter on the host in the task worktree. `docker` mounts
+  the worktree at `/workspace`, sets `/workspace` as the container cwd, and runs the selected
+  adapter inside the supplied image.
 - **Merge-back is always R2** (operator approval required) and only merges when fast-forward/clean
   (`git merge-tree`); conflicts return *needs-manual* and never auto-resolve.
 - **R3 approvals** (none ship in M4) require `--slug <s>` matching the approval's slug.
 - Pending approvals **expire after 60 min** (daemon sweep).
+
+## Voice status
+
+The deterministic M6 voice core is present in default builds, but live microphone/wake/STT/TTS
+backends report `unavailable` until live backends and host dependencies are wired. Use:
+
+```bash
+rat voice status
+rat voice say "hello"
+rat utterances --limit 10
+```
+
+The dashboard Settings tab shows the same backend state, disabled wake/listen toggles, EN/PT smoke
+phrases, and recent post-wake utterances. The avatar MIC chip follows `voice.status`; it pulses when
+the daemon records a new post-wake utterance.
+
+Default builds expose the deterministic voice core and report live backends as unavailable. The
+voice loop still records fake/test utterances through the same store path; local intent execution is
+covered for slug-gated approvals and `pin that` / `pina isso`, which pins the last 2 minutes of the
+screen ring when a recent segment exists.
 
 ## M5 Eyes (ring buffer + OCR observations + pins)
 
@@ -130,8 +195,11 @@ rat pins unpin <pin_id>
 
 Pins are copied from the ephemeral ring into `~/.local/share/rato/pins/<pin-id>/` and
 re-encrypted under a persistent Secret Service key (`rato/pin-key`). Manual pins do not
-expire. Auto-pins are intended to expire through the M5 retention pruner, which is the next
-roadmap item.
+expire. Auto-pins expire through the nightly retention pruner, which also records the last
+prune counts for the dashboard Sensors tab and `retention.status` RPC.
+
+The dashboard uses additive RPCs for newer M5/M6 fields (`ring.status`, `retention.status`,
+`voice.status`, `voice.utterances`) and falls back gracefully when pointed at an older daemon.
 
 ## Data locations
 

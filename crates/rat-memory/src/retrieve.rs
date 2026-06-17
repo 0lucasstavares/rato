@@ -6,7 +6,7 @@ use rat_proto::Observation;
 use rat_store::rows::{Memory, MemoryFilter};
 use rat_store::store::Store;
 
-use crate::embed::{EmbeddingClient, cosine};
+use crate::embed::{cosine, EmbeddingClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HitKind {
@@ -38,9 +38,16 @@ pub fn rrf_fuse(fts: &[String], vec: &[String], k: f64) -> Vec<(String, f64)> {
         *scores.entry(id.as_str()).or_insert(0.0) += 1.0 / (k + rank);
     }
 
-    let mut result: Vec<(String, f64)> = scores.into_iter().map(|(id, s)| (id.to_owned(), s)).collect();
+    let mut result: Vec<(String, f64)> = scores
+        .into_iter()
+        .map(|(id, s)| (id.to_owned(), s))
+        .collect();
     // Sort descending by score; tie-break by id ascending
-    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+    result.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     result
 }
 
@@ -95,7 +102,10 @@ pub async fn search(
         let query_vec = &query_vecs[0];
 
         // Observations
-        let all_obs_emb = store.all_observation_embeddings(10_000).await.map_err(crate::MemoryError::Store)?;
+        let all_obs_emb = store
+            .all_observation_embeddings(10_000)
+            .await
+            .map_err(crate::MemoryError::Store)?;
         let mut obs_sims: Vec<(String, f32)> = all_obs_emb
             .iter()
             .map(|(id, emb)| (id.clone(), cosine(query_vec, emb)))
@@ -104,7 +114,10 @@ pub async fn search(
         let vo: Vec<String> = obs_sims.into_iter().take(40).map(|(id, _)| id).collect();
 
         // Memories
-        let all_mem_emb = store.all_memory_embeddings(10_000).await.map_err(crate::MemoryError::Store)?;
+        let all_mem_emb = store
+            .all_memory_embeddings(10_000)
+            .await
+            .map_err(crate::MemoryError::Store)?;
         let mut mem_sims: Vec<(String, f32)> = all_mem_emb
             .iter()
             .map(|(id, emb)| (id.clone(), cosine(query_vec, emb)))
@@ -131,20 +144,26 @@ pub async fn search(
             .observations_by_ids(obs_ids)
             .await
             .map_err(crate::MemoryError::Store)?;
-        let obs_map: HashMap<String, &Observation> = observations.iter().map(|o| (o.id.clone(), o)).collect();
+        let obs_map: HashMap<String, &Observation> =
+            observations.iter().map(|o| (o.id.clone(), o)).collect();
 
         for (id, rrf_score) in &fused_obs {
             if let Some(obs) = obs_map.get(id) {
                 // Project filter: pass if no project_id filter OR project matches
-                let pass = params.project_id.as_ref().is_none_or(|pid| {
-                    obs.project_id.as_ref() == Some(pid)
-                });
+                let pass = params
+                    .project_id
+                    .as_ref()
+                    .is_none_or(|pid| obs.project_id.as_ref() == Some(pid));
                 if !pass {
                     continue;
                 }
                 let age_days = (now_ms - obs.ts).max(0) as f64 / ms_per_day;
                 let boosted = recency_boost(*rrf_score, age_days);
-                hits.push(Hit { id: id.clone(), kind: HitKind::Observation, score: boosted });
+                hits.push(Hit {
+                    id: id.clone(),
+                    kind: HitKind::Observation,
+                    score: boosted,
+                });
             }
         }
     }
@@ -152,10 +171,14 @@ pub async fn search(
     // Memories: filter by project and type
     if !fused_mem.is_empty() {
         let memories = store
-            .list_memories(MemoryFilter { include_archived: false, ..Default::default() })
+            .list_memories(MemoryFilter {
+                include_archived: false,
+                ..Default::default()
+            })
             .await
             .map_err(crate::MemoryError::Store)?;
-        let mem_map: HashMap<String, &Memory> = memories.iter().map(|m| (m.id.clone(), m)).collect();
+        let mem_map: HashMap<String, &Memory> =
+            memories.iter().map(|m| (m.id.clone(), m)).collect();
 
         for (id, rrf_score) in &fused_mem {
             if let Some(mem) = mem_map.get(id) {
@@ -166,26 +189,37 @@ pub async fn search(
                 let pass = if mem.r#type == "personal" {
                     true
                 } else if mem.r#type == "project" {
-                    params.project_id.as_ref().is_none_or(|pid| {
-                        mem.project_id.as_ref() == Some(pid)
-                    })
+                    params
+                        .project_id
+                        .as_ref()
+                        .is_none_or(|pid| mem.project_id.as_ref() == Some(pid))
                 } else {
-                    params.project_id.as_ref().is_none_or(|pid| {
-                        mem.project_id.as_ref() == Some(pid)
-                    })
+                    params
+                        .project_id
+                        .as_ref()
+                        .is_none_or(|pid| mem.project_id.as_ref() == Some(pid))
                 };
                 if !pass {
                     continue;
                 }
                 let age_days = (now_ms - mem.updated).max(0) as f64 / ms_per_day;
                 let boosted = recency_boost(*rrf_score, age_days);
-                hits.push(Hit { id: id.clone(), kind: HitKind::Memory, score: boosted });
+                hits.push(Hit {
+                    id: id.clone(),
+                    kind: HitKind::Memory,
+                    score: boosted,
+                });
             }
         }
     }
 
     // Sort all hits descending by score, take n
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.id.cmp(&b.id)));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     hits.truncate(params.n);
 
     Ok(hits)
@@ -194,10 +228,10 @@ pub async fn search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use rat_core::clock::FakeClock;
-    use rat_store::store::Store;
     use rat_proto::NewObservation;
+    use rat_store::store::Store;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     #[test]
@@ -217,7 +251,12 @@ mod tests {
         // scores should be equal for a and b
         let score_a = result[0].1;
         let score_b = result[1].1;
-        assert!((score_a - score_b).abs() < 1e-10, "a and b should have equal scores: {} vs {}", score_a, score_b);
+        assert!(
+            (score_a - score_b).abs() < 1e-10,
+            "a and b should have equal scores: {} vs {}",
+            score_a,
+            score_b
+        );
         assert!(result[2].1 < result[0].1);
     }
 
@@ -258,7 +297,11 @@ mod tests {
     fn recency_boost_age_zero() {
         // age=0: score * (1 + 0.25 * e^0) = score * 1.25
         let boosted = recency_boost(1.0, 0.0);
-        assert!((boosted - 1.25).abs() < 1e-10, "expected 1.25, got {}", boosted);
+        assert!(
+            (boosted - 1.25).abs() < 1e-10,
+            "expected 1.25, got {}",
+            boosted
+        );
     }
 
     #[test]
@@ -266,7 +309,12 @@ mod tests {
         // age=14: score * (1 + 0.25 * e^(-1)) ≈ 1 * (1 + 0.25 * 0.36788) ≈ 1.09197
         let boosted = recency_boost(1.0, 14.0);
         let expected = 1.0 + 0.25 * std::f64::consts::E.recip();
-        assert!((boosted - expected).abs() < 1e-6, "expected {}, got {}", expected, boosted);
+        assert!(
+            (boosted - expected).abs() < 1e-6,
+            "expected {}, got {}",
+            expected,
+            boosted
+        );
     }
 
     #[test]
@@ -274,7 +322,13 @@ mod tests {
         let ages = [0.0, 1.0, 7.0, 14.0, 30.0, 60.0, 180.0];
         let boosts: Vec<f64> = ages.iter().map(|&a| recency_boost(1.0, a)).collect();
         for i in 1..boosts.len() {
-            assert!(boosts[i] < boosts[i - 1], "not monotonic at index {}: {} >= {}", i, boosts[i], boosts[i - 1]);
+            assert!(
+                boosts[i] < boosts[i - 1],
+                "not monotonic at index {}: {} >= {}",
+                i,
+                boosts[i],
+                boosts[i - 1]
+            );
         }
     }
 
@@ -284,19 +338,28 @@ mod tests {
         let clock: Arc<dyn Clock> = FakeClock::at(86_400_000); // day 1
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        store.add_observation(NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cargo build --release".into(),
-            project_id: Some("proj1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cargo build --release".into(),
+                project_id: Some("proj1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         let hits = search(
             &store,
             None,
             &clock,
-            SearchParams { query: "cargo".into(), project_id: Some("proj1".into()), n: 10 },
-        ).await.unwrap();
+            SearchParams {
+                query: "cargo".into(),
+                project_id: Some("proj1".into()),
+                n: 10,
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(!hits.is_empty());
         assert_eq!(hits[0].kind, HitKind::Observation);
@@ -308,20 +371,29 @@ mod tests {
         let clock: Arc<dyn Clock> = FakeClock::at(86_400_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        store.add_observation(NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cargo test hello world".into(),
-            project_id: Some("projA".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cargo test hello world".into(),
+                project_id: Some("projA".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Search with different project — should not find it
         let hits = search(
             &store,
             None,
             &clock,
-            SearchParams { query: "cargo".into(), project_id: Some("projB".into()), n: 10 },
-        ).await.unwrap();
+            SearchParams {
+                query: "cargo".into(),
+                project_id: Some("projB".into()),
+                n: 10,
+            },
+        )
+        .await
+        .unwrap();
         assert!(hits.is_empty());
     }
 
@@ -330,18 +402,24 @@ mod tests {
         let tmp = tempdir().unwrap();
         let clock: Arc<dyn Clock> = FakeClock::at(86_400_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let obs = store.add_observation(NewObservation {
-            kind: "shell_cmd".into(),
-            content: "deploy production".into(),
-            project_id: Some("p1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        let obs = store
+            .add_observation(NewObservation {
+                kind: "shell_cmd".into(),
+                content: "deploy production".into(),
+                project_id: Some("p1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Store a fake embedding for this observation
-        store.set_observation_embedding(obs.id.clone(), vec![1.0f32, 0.0]).await.unwrap();
+        store
+            .set_observation_embedding(obs.id.clone(), vec![1.0f32, 0.0])
+            .await
+            .unwrap();
 
         // Wiremock returns embedding [1.0, 0.0] for query (perfect match)
         let server = MockServer::start().await;
@@ -358,11 +436,20 @@ mod tests {
             &store,
             Some(&embedder),
             &clock,
-            SearchParams { query: "deploy".into(), project_id: Some("p1".into()), n: 10 },
-        ).await.unwrap();
+            SearchParams {
+                query: "deploy".into(),
+                project_id: Some("p1".into()),
+                n: 10,
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(!hits.is_empty());
-        let hit = hits.iter().find(|h| h.id == obs.id).expect("should find obs");
+        let hit = hits
+            .iter()
+            .find(|h| h.id == obs.id)
+            .expect("should find obs");
         assert_eq!(hit.kind, HitKind::Observation);
     }
 
@@ -373,22 +460,33 @@ mod tests {
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
         // Add an observation
-        store.add_observation(NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cargo build".into(),
-            project_id: Some("p1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cargo build".into(),
+                project_id: Some("p1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Search with malformed FTS5 query (unbalanced quotes)
         let result = search(
             &store,
             None,
             &clock,
-            SearchParams { query: "\"unbalanced".into(), project_id: Some("p1".into()), n: 10 },
-        ).await;
+            SearchParams {
+                query: "\"unbalanced".into(),
+                project_id: Some("p1".into()),
+                n: 10,
+            },
+        )
+        .await;
 
         // Must return Ok (no panic), result may be empty or partial
-        assert!(result.is_ok(), "malformed query should degrade gracefully, not panic");
+        assert!(
+            result.is_ok(),
+            "malformed query should degrade gracefully, not panic"
+        );
     }
 }

@@ -4,7 +4,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import StatusChip from "../ui/hud/StatusChip.svelte";
   import { poll, rpc } from "../lib/rpc";
-  import type { ApprovalDto, ModeState, PushbackDto, StatusResult } from "../lib/types";
+  import type { ApprovalDto, ModeState, PushbackDto, StatusResult, VoiceStatusDto } from "../lib/types";
   import { mountRat, type Rat3D } from "./rat3d";
 
   let canvas: HTMLCanvasElement;
@@ -12,9 +12,11 @@
 
   let net = $state<"on" | "err">("err");
   let mode = $state<ModeState>({ mode: "active", since_ms: 0, idle_ms: null });
+  let voice = $state<VoiceStatusDto | null>(null);
   let pendingApprovals = $state(0);
   let showQuick = $state(false);
   let stopPoll: (() => void) | null = null;
+  let wakePulse = $state(false);
 
   // Pushback bubble state
   let bubble = $state<PushbackDto | null>(null);
@@ -22,6 +24,13 @@
 
   // Module-level last-seen id (persists across re-renders but not page reloads)
   let lastSeenId = "";
+  let lastUtteranceId = "";
+
+  let micState = $derived.by((): "on" | "off" | "warn" => {
+    if (!voice?.enabled) return "off";
+    const mic = voice.backends.find((b) => b.name === "mic");
+    return mic?.state === "ok" ? "on" : "warn";
+  });
 
   function clearBubbleTimer() {
     if (bubbleTimer !== null) {
@@ -58,6 +67,22 @@
         net = "on";
         mode = await rpc<ModeState>("mode.get");
         rat?.setMode(mode.mode === "away" ? "away" : "active");
+
+        try {
+          voice = await rpc<VoiceStatusDto>("voice.status");
+          const utterances = await rpc<Array<{ id: string }>>("voice.utterances", { limit: 1 });
+          const newest = utterances[0]?.id ?? "";
+          if (newest && newest !== lastUtteranceId) {
+            lastUtteranceId = newest;
+            wakePulse = true;
+            setTimeout(() => {
+              wakePulse = false;
+            }, 1800);
+          }
+        } catch {
+          voice = null;
+          wakePulse = false;
+        }
 
         // Pushback bubble check
         const pushbacks = await rpc<PushbackDto[]>("pushbacks.recent", { n: 1 });
@@ -117,7 +142,9 @@
     title="drag to move"
   >
     <StatusChip label="SCR" state="off" />
-    <StatusChip label="MIC" state="off" />
+    <span class:wake-pulse={wakePulse}>
+      <StatusChip label="MIC" state={micState} />
+    </span>
     <StatusChip label="CLP" state={net === "on" ? "on" : "off"} />
     <StatusChip label="NET" state={net === "on" ? "on" : "err"} />
     {#if pendingApprovals > 0}
@@ -137,6 +164,10 @@
 
   {#if mode.mode === "away"}
     <div class="zzz">z Z z</div>
+  {/if}
+
+  {#if wakePulse}
+    <div class="wake-mark">MIC</div>
   {/if}
 
   {#if bubble !== null}
@@ -204,6 +235,29 @@
     text-shadow: 1px 1px 0 #fff;
     animation: hud-blink-steps 2s steps(2) infinite;
     pointer-events: none;
+  }
+  .wake-mark {
+    position: absolute;
+    top: 47px;
+    left: 22px;
+    font-family: var(--hud-font-head);
+    font-size: 12px;
+    color: var(--hud-ok);
+    text-shadow: 1px 1px 0 #fff;
+    animation: wake-pop 1.8s steps(3) 1;
+    pointer-events: none;
+  }
+  .wake-pulse :global(.hud-chip) {
+    animation: mic-chip-pulse 1.8s steps(3) 1;
+  }
+  @keyframes wake-pop {
+    0% { transform: translateY(4px) rotate(-6deg); opacity: 0; }
+    20% { opacity: 1; }
+    100% { transform: translateY(-8px) rotate(3deg); opacity: 0; }
+  }
+  @keyframes mic-chip-pulse {
+    0%, 100% { filter: none; }
+    35%, 70% { filter: drop-shadow(0 0 5px var(--hud-ok)); }
   }
   .quick {
     position: absolute;

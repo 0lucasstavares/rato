@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
+use rat_brain::backend::ChatRequest;
 use rat_brain::backend::{ChatBackend, ChatResponse, Provider, Route};
-use rat_brain::critic::{Critic, MemorySearcher, MemoryHit};
+use rat_brain::critic::{Critic, MemoryHit, MemorySearcher};
 use rat_brain::detect::Signal;
 use rat_brain::error::LlmError;
-use rat_brain::backend::ChatRequest;
 use rat_core::clock::FakeClock;
 use rat_proto::NewObservation;
 use rat_store::store::Store;
 use serde_json::json;
 use tempfile::tempdir;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A mock MemorySearcher that always returns empty results.
 struct NoopMemorySearcher;
@@ -94,8 +94,7 @@ impl ChatBackend for DirectMockBackend {
             })
             .ok_or_else(|| LlmError::Http(0, "no output_text".to_string()))?;
 
-        let json_val: serde_json::Value =
-            serde_json::from_str(&text).map_err(LlmError::BadJson)?;
+        let json_val: serde_json::Value = serde_json::from_str(&text).map_err(LlmError::BadJson)?;
 
         Ok(ChatResponse {
             json: json_val,
@@ -217,9 +216,12 @@ async fn good_verdict_shown_row() {
     let verdict = good_verdict_json(&obs1.id);
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            serde_json::from_str::<serde_json::Value>(&openai_response(&verdict).to_string()).unwrap()
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                serde_json::from_str::<serde_json::Value>(&openai_response(&verdict).to_string())
+                    .unwrap(),
+            ),
+        )
         .mount(&server)
         .await;
 
@@ -271,9 +273,7 @@ async fn fabricated_obs_id_returns_none() {
     let verdict = fabricated_id_verdict_json();
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            openai_response(&verdict)
-        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response(&verdict)))
         .mount(&server)
         .await;
 
@@ -294,11 +294,17 @@ async fn fabricated_obs_id_returns_none() {
     let result = critic.slow_tick(&signals).await;
 
     // Should return None because evidence IDs are fabricated
-    assert!(result.is_none(), "fabricated obs ID should cause slow_tick to return None");
+    assert!(
+        result.is_none(),
+        "fabricated obs ID should cause slow_tick to return None"
+    );
 
     // No pushback row should be inserted
     let pushbacks = store.recent_pushbacks(10).await.unwrap();
-    assert!(pushbacks.is_empty(), "no pushback should be stored for fabricated IDs");
+    assert!(
+        pushbacks.is_empty(),
+        "no pushback should be stored for fabricated IDs"
+    );
 }
 
 #[tokio::test]
@@ -315,9 +321,7 @@ async fn low_confidence_queued() {
     let verdict = low_confidence_verdict_json(&obs1.id);
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            openai_response(&verdict)
-        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response(&verdict)))
         .mount(&server)
         .await;
 
@@ -368,9 +372,7 @@ async fn dedupe_skip() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            openai_response(&good_verdict)
-        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response(&good_verdict)))
         .up_to_n_times(2) // allow 2 calls (first + second tick)
         .mount(&server)
         .await;
@@ -383,7 +385,10 @@ async fn dedupe_skip() {
 
     let critic1 = make_critic_with_backend(store.clone(), backend1, clock.clone());
     let first_result = critic1.slow_tick(&signals).await;
-    assert!(first_result.is_some(), "first call should return shown pushback");
+    assert!(
+        first_result.is_some(),
+        "first call should return shown pushback"
+    );
     assert_eq!(first_result.unwrap().status, "shown");
 
     // Second call with same evidence → dedupe should skip insert and return None
@@ -395,7 +400,10 @@ async fn dedupe_skip() {
 
     let critic2 = make_critic_with_backend(store.clone(), backend2, clock.clone());
     let second_result = critic2.slow_tick(&signals).await;
-    assert!(second_result.is_none(), "second call with same evidence should return None (dedupe)");
+    assert!(
+        second_result.is_none(),
+        "second call with same evidence should return None (dedupe)"
+    );
 
     // Only one pushback should exist in store (from first call)
     let pushbacks = store.recent_pushbacks(10).await.unwrap();

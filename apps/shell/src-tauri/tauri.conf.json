@@ -5,7 +5,7 @@
   "identifier": "dev.rato.shell",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:19773",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

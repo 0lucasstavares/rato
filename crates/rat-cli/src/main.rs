@@ -10,8 +10,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
 
 use rat_proto::{
-    methods, AgentRunDto, ApprovalDto, Event, HitDto, ModeState, NewEvent, Observation, Project,
-    PinDto, PushbackDto, WorkSession, WorkbenchMergeBackParams,
+    methods, AgentRunDto, ApprovalDto, DotfileEditDto, Event, HitDto, ModeState, NewEvent,
+    Observation, PinDto, Project, PushbackDto, TerminalDto, VoiceStatusDto, VoiceUtteranceDto,
+    WorkSession, WorkbenchMergeBackParams,
 };
 
 /// RATO control CLI.
@@ -124,6 +125,28 @@ enum Cmd {
         #[command(subcommand)]
         cmd: Option<PinsCmd>,
     },
+    /// Voice backend and utterance status
+    Voice {
+        #[command(subcommand)]
+        cmd: VoiceCmd,
+    },
+    /// Show recent post-wake voice utterances
+    Utterances {
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Show and classify detected agent terminals
+    Terminals {
+        #[command(subcommand)]
+        cmd: Option<TerminalsCmd>,
+    },
+    /// Show and revert audited config edits
+    ConfigEdits {
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        #[command(subcommand)]
+        cmd: Option<ConfigEditsCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -146,17 +169,17 @@ enum TaskCmd {
         title: String,
         #[arg(long, default_value = "fakeagent", value_parser = ["fakeagent", "claude-code", "codex"])]
         adapter: String,
+        #[arg(long, default_value = "local", value_parser = ["local", "docker"])]
+        executor: String,
+        #[arg(long)]
+        docker_image: Option<String>,
     },
     /// List recent agent runs
     List,
     /// Tail the tmux output of a run
-    Tail {
-        run_id: String,
-    },
+    Tail { run_id: String },
     /// Trigger a merge-back approval for a completed run
-    MergeBack {
-        run_id: String,
-    },
+    MergeBack { run_id: String },
 }
 
 #[derive(Subcommand)]
@@ -183,9 +206,45 @@ enum PinsCmd {
         media: String,
     },
     /// Remove a pin and its files
-    Unpin {
+    Unpin { id: String },
+}
+
+#[derive(Subcommand)]
+enum VoiceCmd {
+    /// Show voice backend availability
+    Status,
+    /// TTS smoke command; reports unavailable until the tts backend is wired
+    Say { text: String },
+}
+
+#[derive(Subcommand)]
+enum TerminalsCmd {
+    /// Persist the role for a detected terminal
+    SetRole {
         id: String,
+        #[arg(value_parser = ["operator", "workbench", "foreign", "ignored"])]
+        role: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ConfigEditsCmd {
+    /// Apply a managed config edit through DotfileEditor
+    Apply {
+        path: PathBuf,
+        #[arg(long, value_parser = ["json", "jsonc", "toml", "yaml", "text"])]
+        kind: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        content: Option<String>,
+        #[arg(long)]
+        from: Option<PathBuf>,
+        #[arg(long, default_value_t = 3)]
+        risk: i64,
+    },
+    /// Restore the exact before-bytes from an audited edit
+    Revert { id: String },
 }
 
 #[derive(Subcommand)]
@@ -264,30 +323,54 @@ async fn main() -> anyhow::Result<()> {
             println!("events: {}", s.event_count);
             println!("db: {}", s.db_path);
         }
-        Cmd::Emit { kind, source, payload } => {
+        Cmd::Emit {
+            kind,
+            source,
+            payload,
+        } => {
             let payload: Value = match payload {
                 Some(s) => serde_json::from_str(&s).context("--payload must be valid JSON")?,
                 None => Value::Null,
             };
             let mut c = client::Client::connect(&socket).await?;
-            let ev = NewEvent { kind, source, payload, ..Default::default() };
+            let ev = NewEvent {
+                kind,
+                source,
+                payload,
+                ..Default::default()
+            };
             let appended: Event = serde_json::from_value(
-                c.call(methods::EVENTS_APPEND, serde_json::to_value(ev)?).await?,
+                c.call(methods::EVENTS_APPEND, serde_json::to_value(ev)?)
+                    .await?,
             )?;
             println!("{} {} {}", appended.id, appended.ts, appended.kind);
         }
-        Cmd::Events { cmd: EventsCmd::Recent { limit } } => {
+        Cmd::Events {
+            cmd: EventsCmd::Recent { limit },
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let events: Vec<Event> = serde_json::from_value(
-                c.call(methods::EVENTS_RECENT, serde_json::json!({ "limit": limit })).await?,
+                c.call(
+                    methods::EVENTS_RECENT,
+                    serde_json::json!({ "limit": limit }),
+                )
+                .await?,
             )?;
             for e in events {
-                let payload =
-                    if e.payload.is_null() { String::new() } else { e.payload.to_string() };
+                let payload = if e.payload.is_null() {
+                    String::new()
+                } else {
+                    e.payload.to_string()
+                };
                 println!("{}  {:<20} {:<10} {}", e.ts, e.kind, e.source, payload);
             }
         }
-        Cmd::EmitShell { cmd, cwd, exit, duration_ms } => {
+        Cmd::EmitShell {
+            cmd,
+            cwd,
+            exit,
+            duration_ms,
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let ev = NewEvent {
                 kind: "shell_cmd".into(),
@@ -296,7 +379,8 @@ async fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
             // result may be null (loop guard) — that's fine, stay silent
-            c.call(methods::EVENTS_APPEND, serde_json::to_value(ev)?).await?;
+            c.call(methods::EVENTS_APPEND, serde_json::to_value(ev)?)
+                .await?;
         }
         Cmd::ShellInit { shell } => print!("{}", shellinit::snippet(shell.into())?),
         Cmd::Projects => {
@@ -310,7 +394,8 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Sessions { limit } => {
             let mut c = client::Client::connect(&socket).await?;
             let sessions: Vec<WorkSession> = serde_json::from_value(
-                c.call(methods::SESSIONS_RECENT, json!({"limit": limit})).await?,
+                c.call(methods::SESSIONS_RECENT, json!({"limit": limit}))
+                    .await?,
             )?;
             for s in sessions {
                 let state = match s.ended {
@@ -327,21 +412,34 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Observations { limit, kind } => {
             let mut c = client::Client::connect(&socket).await?;
             let obs: Vec<Observation> = serde_json::from_value(
-                c.call(methods::OBSERVATIONS_RECENT, json!({"limit": limit, "kind": kind})).await?,
+                c.call(
+                    methods::OBSERVATIONS_RECENT,
+                    json!({"limit": limit, "kind": kind}),
+                )
+                .await?,
             )?;
             for o in obs {
-                println!("{}  {:<20} {}", o.ts, o.kind, o.content.replace('\n', "\\n"));
+                println!(
+                    "{}  {:<20} {}",
+                    o.ts,
+                    o.kind,
+                    o.content.replace('\n', "\\n")
+                );
             }
         }
         Cmd::Mode => {
             let mut c = client::Client::connect(&socket).await?;
-            let m: ModeState = serde_json::from_value(c.call(methods::MODE_GET, Value::Null).await?)?;
+            let m: ModeState =
+                serde_json::from_value(c.call(methods::MODE_GET, Value::Null).await?)?;
             match m.idle_ms {
                 Some(idle) => println!("{} (idle {}s)", m.mode, idle / 1000),
                 None => println!("{} (idle unknown)", m.mode),
             }
         }
-        Cmd::Install { no_systemctl, ratd_path } => install::install(no_systemctl, ratd_path)?,
+        Cmd::Install {
+            no_systemctl,
+            ratd_path,
+        } => install::install(no_systemctl, ratd_path)?,
         Cmd::Doctor => doctor::doctor(&socket).await?,
         Cmd::Setup { provider, keys_dir } => {
             let keys_dir = keys_dir.unwrap_or_else(|| {
@@ -400,7 +498,8 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Pushbacks { n, cmd: None } => {
             let mut c = client::Client::connect(&socket).await?;
             let pbs: Vec<PushbackDto> = serde_json::from_value(
-                c.call(methods::PUSHBACKS_RECENT, serde_json::json!({ "n": n })).await?,
+                c.call(methods::PUSHBACKS_RECENT, serde_json::json!({ "n": n }))
+                    .await?,
             )?;
             if pbs.is_empty() {
                 println!("(no pushbacks)");
@@ -412,7 +511,10 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         }
-        Cmd::Pushbacks { cmd: Some(PushbacksCmd::Feedback { id, verdict }), .. } => {
+        Cmd::Pushbacks {
+            cmd: Some(PushbacksCmd::Feedback { id, verdict }),
+            ..
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let pb: PushbackDto = serde_json::from_value(
                 c.call(
@@ -437,46 +539,77 @@ async fn main() -> anyhow::Result<()> {
                 println!("last_error:        {}", err);
             }
         }
-        Cmd::Task { cmd: TaskCmd::Start { project, title, adapter } } => {
+        Cmd::Task {
+            cmd:
+                TaskCmd::Start {
+                    project,
+                    title,
+                    adapter,
+                    executor,
+                    docker_image,
+                },
+        } => {
             // Resolve the project_id: look up project by root_path via list_projects
             let mut c = client::Client::connect(&socket).await?;
-            let projects: Vec<Project> = serde_json::from_value(
-                c.call(methods::PROJECTS_LIST, Value::Null).await?,
-            )?;
-            let project_id = projects.iter()
+            let projects: Vec<Project> =
+                serde_json::from_value(c.call(methods::PROJECTS_LIST, Value::Null).await?)?;
+            let project_id = projects
+                .iter()
                 .find(|p| p.root_path == project || p.name == project)
                 .map(|p| p.id.clone())
                 .unwrap_or_else(|| project.clone()); // fallback: treat as project_id directly
             let run: AgentRunDto = serde_json::from_value(
-                c.call(methods::WORKBENCH_START, serde_json::json!({
-                    "project_id": project_id,
-                    "title": title,
-                    "adapter": adapter,
-                })).await?,
+                c.call(
+                    methods::WORKBENCH_START,
+                    serde_json::json!({
+                        "project_id": project_id,
+                        "title": title,
+                        "adapter": adapter,
+                        "executor": executor,
+                        "docker_image": docker_image,
+                    }),
+                )
+                .await?,
             )?;
-            println!("{} {} {} {}", run.id, run.status, run.adapter, run.task_title);
+            println!(
+                "{} {} {} {}",
+                run.id, run.status, run.adapter, run.task_title
+            );
         }
         Cmd::Task { cmd: TaskCmd::List } => {
             let mut c = client::Client::connect(&socket).await?;
             let runs: Vec<AgentRunDto> = serde_json::from_value(
-                c.call(methods::WORKBENCH_RUNS, serde_json::json!({})).await?,
+                c.call(methods::WORKBENCH_RUNS, serde_json::json!({}))
+                    .await?,
             )?;
             if runs.is_empty() {
                 println!("(no runs)");
             }
             for r in runs {
-                println!("{} [{:<8}] {:<12} {}", r.id, r.status, r.adapter, r.task_title);
+                println!(
+                    "{} [{:<8}] {:<12} {}",
+                    r.id, r.status, r.adapter, r.task_title
+                );
             }
         }
-        Cmd::Task { cmd: TaskCmd::Tail { run_id } } => {
+        Cmd::Task {
+            cmd: TaskCmd::Tail { run_id },
+        } => {
             let mut c = client::Client::connect(&socket).await?;
-            let result = c.call(methods::WORKBENCH_TAIL, serde_json::json!({
-                "run_id": run_id,
-            })).await?;
+            let result = c
+                .call(
+                    methods::WORKBENCH_TAIL,
+                    serde_json::json!({
+                        "run_id": run_id,
+                    }),
+                )
+                .await?;
             let lines = result["lines"].as_str().unwrap_or("");
             print!("{}", lines);
         }
-        Cmd::Task { cmd: TaskCmd::MergeBack { run_id } } => {
+        Cmd::Task {
+            cmd: TaskCmd::MergeBack { run_id },
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let approval: ApprovalDto = serde_json::from_value(
                 c.call(
@@ -485,7 +618,15 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?,
             )?;
-            let slug: String = approval.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
+            let slug: String = approval
+                .id
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
             let diffstat = approval
                 .expected_impact
                 .get("diffstat")
@@ -498,26 +639,47 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Approvals { cmd: None } => {
             let mut c = client::Client::connect(&socket).await?;
-            let approvals: Vec<ApprovalDto> = serde_json::from_value(
-                c.call(methods::APPROVALS_PENDING, Value::Null).await?,
-            )?;
+            let approvals: Vec<ApprovalDto> =
+                serde_json::from_value(c.call(methods::APPROVALS_PENDING, Value::Null).await?)?;
             if approvals.is_empty() {
                 println!("(no pending approvals)");
             }
             for a in approvals {
-                let slug: String = a.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
-                println!("{} [{:<8}] R{} [{}] {}", a.id, a.status, a.risk, slug, a.title);
+                let slug: String =
+                    a.id.chars()
+                        .rev()
+                        .take(6)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
+                println!(
+                    "{} [{:<8}] R{} [{}] {}",
+                    a.id, a.status, a.risk, slug, a.title
+                );
             }
         }
-        Cmd::Approvals { cmd: Some(ApprovalsCmd::Decide { id, verdict, note, slug }) } => {
+        Cmd::Approvals {
+            cmd:
+                Some(ApprovalsCmd::Decide {
+                    id,
+                    verdict,
+                    note,
+                    slug,
+                }),
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let approval: ApprovalDto = serde_json::from_value(
-                c.call(methods::APPROVALS_DECIDE, serde_json::json!({
-                    "id": id,
-                    "verdict": verdict,
-                    "note": note,
-                    "slug": slug,
-                })).await?,
+                c.call(
+                    methods::APPROVALS_DECIDE,
+                    serde_json::json!({
+                        "id": id,
+                        "verdict": verdict,
+                        "note": note,
+                        "slug": slug,
+                    }),
+                )
+                .await?,
             )?;
             println!("{} → {}", approval.id, approval.status);
         }
@@ -529,11 +691,19 @@ async fn main() -> anyhow::Result<()> {
                 println!("(no pins)");
             }
             for p in pins {
-                let expiry = p.expires_at.map(|ts| ts.to_string()).unwrap_or_else(|| "manual".to_string());
-                println!("{} [{:<6}] {:<9} expires={} {}", p.id, p.kind, p.media, expiry, p.reason);
+                let expiry = p
+                    .expires_at
+                    .map(|ts| ts.to_string())
+                    .unwrap_or_else(|| "manual".to_string());
+                println!(
+                    "{} [{:<6}] {:<9} expires={} {}",
+                    p.id, p.kind, p.media, expiry, p.reason
+                );
             }
         }
-        Cmd::Pins { cmd: Some(PinsCmd::PinRecent { minutes, media }) } => {
+        Cmd::Pins {
+            cmd: Some(PinsCmd::PinRecent { minutes, media }),
+        } => {
             let mut c = client::Client::connect(&socket).await?;
             let pin: PinDto = serde_json::from_value(
                 c.call(
@@ -544,10 +714,164 @@ async fn main() -> anyhow::Result<()> {
             )?;
             println!("{} {} {}", pin.id, pin.media, pin.path);
         }
-        Cmd::Pins { cmd: Some(PinsCmd::Unpin { id }) } => {
+        Cmd::Pins {
+            cmd: Some(PinsCmd::Unpin { id }),
+        } => {
             let mut c = client::Client::connect(&socket).await?;
-            c.call(methods::PINS_UNPIN, serde_json::json!({ "id": id })).await?;
+            c.call(methods::PINS_UNPIN, serde_json::json!({ "id": id }))
+                .await?;
             println!("unpinned");
+        }
+        Cmd::Voice {
+            cmd: VoiceCmd::Status,
+        } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let status: VoiceStatusDto =
+                serde_json::from_value(c.call(methods::VOICE_STATUS, Value::Null).await?)?;
+            println!("enabled:          {}", status.enabled);
+            println!("prewake_ring:     {}s RAM-only", status.prewake_ring_secs);
+            for backend in status.backends {
+                match backend.reason {
+                    Some(reason) => {
+                        println!("backend {:<8} {} ({})", backend.name, backend.state, reason)
+                    }
+                    None => println!("backend {:<8} {}", backend.name, backend.state),
+                }
+            }
+        }
+        Cmd::Voice {
+            cmd: VoiceCmd::Say { text },
+        } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let status: VoiceStatusDto =
+                serde_json::from_value(c.call(methods::VOICE_STATUS, Value::Null).await?)?;
+            let tts = status.backends.iter().find(|b| b.name == "tts");
+            if tts.map(|b| b.state.as_str()) == Some("ok") {
+                println!("tts smoke requested: {text}");
+            } else {
+                println!(
+                    "tts unavailable: {}",
+                    tts.and_then(|b| b.reason.as_deref())
+                        .unwrap_or("backend not reported")
+                );
+            }
+        }
+        Cmd::Utterances { limit } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let utterances: Vec<VoiceUtteranceDto> = serde_json::from_value(
+                c.call(
+                    methods::VOICE_UTTERANCES,
+                    serde_json::json!({ "limit": limit }),
+                )
+                .await?,
+            )?;
+            if utterances.is_empty() {
+                println!("(no voice utterances)");
+            }
+            for u in utterances {
+                println!(
+                    "{} [{:<2}] wake={:<8} handled={} {}",
+                    u.ts, u.lang, u.wake_word, u.handled, u.text
+                );
+            }
+        }
+        Cmd::Terminals { cmd: None } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let terminals: Vec<TerminalDto> =
+                serde_json::from_value(c.call(methods::TERMINALS_LIST, Value::Null).await?)?;
+            if terminals.is_empty() {
+                println!("(no terminals)");
+            }
+            for t in terminals {
+                let tmux = t.tmux_target.unwrap_or_else(|| "-".to_string());
+                println!(
+                    "{} [{:<9}] pid={:<6} tty={:<12} tmux={:<12} {}",
+                    t.id, t.role, t.pid, t.tty, tmux, t.emulator
+                );
+            }
+        }
+        Cmd::Terminals {
+            cmd: Some(TerminalsCmd::SetRole { id, role }),
+        } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let terminal: TerminalDto = serde_json::from_value(
+                c.call(
+                    methods::TERMINALS_SET_ROLE,
+                    serde_json::json!({ "id": id, "role": role }),
+                )
+                .await?,
+            )?;
+            println!("{} → {}", terminal.id, terminal.role);
+        }
+        Cmd::ConfigEdits { limit, cmd: None } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let edits: Vec<DotfileEditDto> = serde_json::from_value(
+                c.call(
+                    methods::DOTFILE_EDITS_LIST,
+                    serde_json::json!({ "limit": limit }),
+                )
+                .await?,
+            )?;
+            if edits.is_empty() {
+                println!("(no config edits)");
+            }
+            for e in edits {
+                let reverted = e.reverted_by.unwrap_or_else(|| "-".to_string());
+                println!(
+                    "{} R{} applied={} reverted_by={} {}",
+                    e.id, e.risk, e.applied, reverted, e.path
+                );
+            }
+        }
+        Cmd::ConfigEdits {
+            cmd:
+                Some(ConfigEditsCmd::Apply {
+                    path,
+                    kind,
+                    reason,
+                    content,
+                    from,
+                    risk,
+                }),
+            ..
+        } => {
+            let contents = match (content, from) {
+                (Some(text), None) => text,
+                (None, Some(path)) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?,
+                (Some(_), Some(_)) => anyhow::bail!("use only one of --content or --from"),
+                (None, None) => anyhow::bail!("one of --content or --from is required"),
+            };
+            let mut c = client::Client::connect(&socket).await?;
+            let edit: DotfileEditDto = serde_json::from_value(
+                c.call(
+                    methods::DOTFILE_EDITS_APPLY,
+                    serde_json::json!({
+                        "path": path.display().to_string(),
+                        "kind": kind,
+                        "contents": contents,
+                        "reason": reason,
+                        "source": "rat-cli",
+                        "risk": risk,
+                    }),
+                )
+                .await?,
+            )?;
+            println!("applied {} {}", edit.id, edit.path);
+        }
+        Cmd::ConfigEdits {
+            cmd: Some(ConfigEditsCmd::Revert { id }),
+            ..
+        } => {
+            let mut c = client::Client::connect(&socket).await?;
+            let edit: DotfileEditDto = serde_json::from_value(
+                c.call(
+                    methods::DOTFILE_EDITS_REVERT,
+                    serde_json::json!({ "id": id }),
+                )
+                .await?,
+            )?;
+            println!("reverted via {} {}", edit.id, edit.path);
         }
     }
     Ok(())
@@ -591,8 +915,11 @@ mod tests {
         let bom_key = "\u{feff}sk-bom-test\n";
         std::fs::write(tmp.path().join("open_k.txt"), bom_key).unwrap();
         let (keys, notes) = read_key_files(tmp.path());
-        assert_eq!(keys.get("openai").map(|s| s.as_str()), Some("sk-bom-test"),
-            "BOM should be stripped before the key is stored");
+        assert_eq!(
+            keys.get("openai").map(|s| s.as_str()),
+            Some("sk-bom-test"),
+            "BOM should be stripped before the key is stored"
+        );
         assert!(notes.is_empty());
     }
 
@@ -605,10 +932,24 @@ mod tests {
         // Also write a valid anthropic key to confirm the other file still loads
         std::fs::write(tmp.path().join("antr_k.txt"), "ant-key").unwrap();
         let (keys, notes) = read_key_files(tmp.path());
-        assert_eq!(keys.get("openai"), None, "oversized file must not be stored");
-        assert_eq!(keys.get("anthropic").map(|s| s.as_str()), Some("ant-key"),
-            "non-oversized file must still load");
-        assert_eq!(notes.len(), 1, "one warning note expected for the oversized file");
-        assert!(notes[0].contains("4097"), "note should mention the actual byte count");
+        assert_eq!(
+            keys.get("openai"),
+            None,
+            "oversized file must not be stored"
+        );
+        assert_eq!(
+            keys.get("anthropic").map(|s| s.as_str()),
+            Some("ant-key"),
+            "non-oversized file must still load"
+        );
+        assert_eq!(
+            notes.len(),
+            1,
+            "one warning note expected for the oversized file"
+        );
+        assert!(
+            notes[0].contains("4097"),
+            "note should mention the actual byte count"
+        );
     }
 }

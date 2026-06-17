@@ -2,15 +2,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use rat_proto::{
-    AgentRunDto, ApprovalDto, ApprovalsDecideParams, WorkbenchMergeBackParams, WorkbenchRunsParams,
-    WorkbenchStartParams, WorkbenchTailParams, errcodes, methods, HelloParams, HelloResult, HitDto,
-    LlmKeyPresence, LlmStatusResult, MemorySearchParams, NewEvent, ObsRecentParams, PushbackDto,
-    PushbackFeedbackParams, PushbacksRecentParams, RecentParams, Request, Response, StatusResult,
-    PinDto, PinsPinRecentParams, PinsUnpinParams, PROTO_VERSION,
-};
 use rat_policy::{requires_slug, risk_tier, ActionKind, RiskOutcome};
-use rat_workbench::runner::TaskRunner;
+use rat_proto::{
+    errcodes, methods, AgentRunDto, ApprovalDto, ApprovalsDecideParams, DisclosureDto,
+    DotfileEditDto, DotfileEditsApplyParams, DotfileEditsRevertParams, HelloParams, HelloResult,
+    HitDto, LlmKeyPresence, LlmStatusResult, MemoryDto, MemoryListParams, MemorySearchParams,
+    NewEvent, ObsRecentParams, PinDto, PinsPinRecentParams, PinsUnpinParams, PushbackDto,
+    PushbackFeedbackParams, PushbacksRecentParams, RecentParams, Request, Response,
+    RetentionStatusDto, StatusResult, TerminalDto, TerminalsSetRoleParams, VoiceBackendStatusDto,
+    VoiceStatusDto, VoiceUtteranceDto, WorkbenchMergeBackParams, WorkbenchRunsParams,
+    WorkbenchStartParams, WorkbenchTailParams, PROTO_VERSION,
+};
+use rat_workbench::runner::{ExecutionBackend, TaskRunner};
 use rat_workbench::{ClaudeCode, Codex, FakeAgent};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -19,11 +22,13 @@ use rat_core::clock::Clock;
 use rat_memory::embed::EmbeddingClient;
 use rat_memory::retrieve::{search, SearchParams};
 use rat_memory::HitKind;
+use rat_store::rows::{MemoryFilter, NewDotfileEdit};
 use rat_store::store::Store;
 
 use crate::ingest::Ingest;
 use crate::mode::ModeManager;
 use crate::pins::{media_from_str, PinKind, PinService};
+use crate::sensors_health::SensorGate;
 
 /// Shared LLM/critic status, readable via the `llm.status` RPC method.
 pub struct LlmStatusState {
@@ -64,6 +69,7 @@ pub struct ServerCtx {
     pub llm_status: Arc<LlmStatusState>,
     pub task_runner: TaskRunner,
     pub pins: Option<PinService>,
+    pub sensors: Arc<SensorGate>,
 }
 
 /// Accept loop. Runs until the task is dropped.
@@ -103,7 +109,11 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => {
-            return Response::err(0, errcodes::INVALID_REQUEST, format!("invalid request: {e}"))
+            return Response::err(
+                0,
+                errcodes::INVALID_REQUEST,
+                format!("invalid request: {e}"),
+            )
         }
     };
     match req.method.as_str() {
@@ -147,6 +157,7 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 uptime_ms: ctx.started.elapsed().as_millis() as i64,
                 event_count,
                 db_path: ctx.db_path.display().to_string(),
+                sensors: ctx.sensors.snapshot(),
             };
             Response::ok(req.id, serde_json::to_value(result).expect("serializes"))
         }
@@ -154,11 +165,19 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             let ev: NewEvent = match serde_json::from_value(req.params) {
                 Ok(p) => p,
                 Err(e) => {
-                    return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad event: {e}"))
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad event: {e}"),
+                    )
                 }
             };
             if ev.kind.is_empty() || ev.source.is_empty() {
-                return Response::err(req.id, errcodes::INVALID_REQUEST, "kind and source are required");
+                return Response::err(
+                    req.id,
+                    errcodes::INVALID_REQUEST,
+                    "kind and source are required",
+                );
             }
             match ctx.ingest.ingest(ev).await {
                 Ok(Some(event)) => {
@@ -186,7 +205,9 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 }
             };
             match ctx.store.recent(params.limit.min(1000)).await {
-                Ok(events) => Response::ok(req.id, serde_json::to_value(events).expect("serializes")),
+                Ok(events) => {
+                    Response::ok(req.id, serde_json::to_value(events).expect("serializes"))
+                }
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
@@ -205,13 +226,19 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                     }
                 }
             };
-            match ctx.store.recent_observations(params.limit.min(1000), params.kind).await {
+            match ctx
+                .store
+                .recent_observations(params.limit.min(1000), params.kind)
+                .await
+            {
                 Ok(obs) => Response::ok(req.id, serde_json::to_value(obs).expect("serializes")),
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
         methods::PROJECTS_LIST => match ctx.store.list_projects().await {
-            Ok(projects) => Response::ok(req.id, serde_json::to_value(projects).expect("serializes")),
+            Ok(projects) => {
+                Response::ok(req.id, serde_json::to_value(projects).expect("serializes"))
+            }
             Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
         },
         methods::SESSIONS_RECENT => {
@@ -230,13 +257,16 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 }
             };
             match ctx.store.recent_sessions(params.limit.min(1000)).await {
-                Ok(sessions) => Response::ok(req.id, serde_json::to_value(sessions).expect("serializes")),
+                Ok(sessions) => {
+                    Response::ok(req.id, serde_json::to_value(sessions).expect("serializes"))
+                }
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
-        methods::MODE_GET => {
-            Response::ok(req.id, serde_json::to_value(ctx.mode.state()).expect("serializes"))
-        }
+        methods::MODE_GET => Response::ok(
+            req.id,
+            serde_json::to_value(ctx.mode.state()).expect("serializes"),
+        ),
         methods::MEMORY_SEARCH => {
             let params: MemorySearchParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
@@ -253,7 +283,11 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 &ctx.store,
                 ctx.embedder.as_ref(),
                 &ctx.clock,
-                SearchParams { query: params.query, project_id: params.project_id, n },
+                SearchParams {
+                    query: params.query,
+                    project_id: params.project_id,
+                    n,
+                },
             )
             .await
             {
@@ -269,6 +303,68 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                             score: h.score,
                         })
                         .collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::MEMORY_LIST => {
+            let params: MemoryListParams = if req.params.is_null() {
+                MemoryListParams {
+                    r#type: None,
+                    project_id: None,
+                    include_archived: false,
+                    limit: None,
+                }
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            let limit = params.limit.unwrap_or(50).min(1000) as usize;
+            match ctx
+                .store
+                .list_memories(MemoryFilter {
+                    r#type: params.r#type,
+                    project_id: params.project_id,
+                    include_archived: params.include_archived,
+                })
+                .await
+            {
+                Ok(rows) => {
+                    let dtos: Vec<MemoryDto> =
+                        rows.into_iter().take(limit).map(memory_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::DISCLOSURES_RECENT => {
+            let params: RecentParams = if req.params.is_null() {
+                RecentParams::default()
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            match ctx.store.recent_disclosures(params.limit.min(1000)).await {
+                Ok(rows) => {
+                    let dtos: Vec<DisclosureDto> =
+                        rows.into_iter().map(disclosure_to_dto).collect();
                     Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
                 }
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
@@ -354,7 +450,10 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                     anthropic: ctx.llm_status.anthropic_key,
                     openrouter: ctx.llm_status.openrouter_key,
                 },
-                embedding_enabled: ctx.llm_status.embedding_enabled.load(std::sync::atomic::Ordering::Relaxed),
+                embedding_enabled: ctx
+                    .llm_status
+                    .embedding_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 critic_enabled: ctx.llm_status.critic_enabled,
                 last_error,
             };
@@ -363,33 +462,82 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
         methods::WORKBENCH_START => {
             let params: WorkbenchStartParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
-                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
             };
             // Resolve project_id → root_path
             let project = match ctx.store.get_project_by_id(params.project_id.clone()).await {
                 Ok(Some(p)) => p,
-                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("project {} not found", params.project_id)),
+                Ok(None) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("project {} not found", params.project_id),
+                    )
+                }
                 Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             };
             let project_root = std::path::PathBuf::from(&project.root_path);
-            // Map adapter string to impl
-            let run = match params.adapter.as_str() {
-                "fakeagent" => {
-                    let adapter = FakeAgent::from_manifest();
-                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
+            let backend = match params.executor.as_str() {
+                "local" => ExecutionBackend::Local,
+                "docker" => {
+                    let Some(image) = params
+                        .docker_image
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            "docker executor requires docker_image",
+                        );
+                    };
+                    ExecutionBackend::Docker {
+                        image: image.to_string(),
+                    }
                 }
-                "claude-code" => {
-                    let adapter = ClaudeCode;
-                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
+                other => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("unknown executor: {other}; must be local|docker"),
+                    );
                 }
-                "codex" => {
-                    let adapter = Codex;
-                    ctx.task_runner.start(&project_root, &params.project_id, &params.title, &adapter, "HEAD").await
-                }
-                other => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("unknown adapter: {other}; must be fakeagent|claude-code|codex")),
             };
+            let adapter: Box<dyn rat_workbench::AgentAdapter> = match params.adapter.as_str() {
+                "fakeagent" => Box::new(FakeAgent::from_manifest()),
+                "claude-code" => Box::new(ClaudeCode),
+                "codex" => Box::new(Codex),
+                other => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("unknown adapter: {other}; must be fakeagent|claude-code|codex"),
+                    )
+                }
+            };
+            let run = ctx
+                .task_runner
+                .start_with_backend(
+                    &project_root,
+                    &params.project_id,
+                    &params.title,
+                    adapter.as_ref(),
+                    "HEAD",
+                    backend,
+                )
+                .await;
             match run {
-                Ok(r) => Response::ok(req.id, serde_json::to_value(agent_run_to_dto(r)).expect("serializes")),
+                Ok(r) => Response::ok(
+                    req.id,
+                    serde_json::to_value(agent_run_to_dto(r)).expect("serializes"),
+                ),
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
@@ -399,7 +547,13 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             } else {
                 match serde_json::from_value(req.params) {
                     Ok(p) => p,
-                    Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
                 }
             };
             let n = params.n.unwrap_or(20);
@@ -424,16 +578,34 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
         methods::WORKBENCH_TAIL => {
             let params: WorkbenchTailParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
-                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
             };
             let run = match ctx.store.get_agent_run(params.run_id.clone()).await {
                 Ok(Some(r)) => r,
-                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("run {} not found", params.run_id)),
+                Ok(None) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("run {} not found", params.run_id),
+                    )
+                }
                 Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             };
             let target = match run.tmux_target {
                 Some(t) => t,
-                None => return Response::err(req.id, errcodes::INVALID_REQUEST, "run has no tmux_target"),
+                None => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        "run has no tmux_target",
+                    )
+                }
             };
             let lines = params.lines.unwrap_or(50);
             match ctx.task_runner.tmux.capture_tail(&target, lines) {
@@ -441,27 +613,41 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             }
         }
-        methods::APPROVALS_PENDING => {
-            match ctx.store.pending_approvals().await {
-                Ok(approvals) => {
-                    let dtos: Vec<ApprovalDto> = approvals.into_iter().map(approval_to_dto).collect();
-                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
-                }
-                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+        methods::APPROVALS_PENDING => match ctx.store.pending_approvals().await {
+            Ok(approvals) => {
+                let dtos: Vec<ApprovalDto> = approvals.into_iter().map(approval_to_dto).collect();
+                Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
             }
-        }
+            Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+        },
         methods::APPROVALS_DECIDE => {
             let params: ApprovalsDecideParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
-                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
             };
             if params.verdict != "approve" && params.verdict != "deny" {
-                return Response::err(req.id, errcodes::INVALID_REQUEST, "verdict must be 'approve' or 'deny'");
+                return Response::err(
+                    req.id,
+                    errcodes::INVALID_REQUEST,
+                    "verdict must be 'approve' or 'deny'",
+                );
             }
             // Fetch the approval to check its tier and slug
             let approval = match ctx.store.get_approval(params.id.clone()).await {
                 Ok(Some(a)) => a,
-                Ok(None) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("approval {} not found", params.id)),
+                Ok(None) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("approval {} not found", params.id),
+                    )
+                }
                 Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
             };
             // R3 gate: if risk tier requires slug, slug param MUST be provided and match
@@ -480,23 +666,47 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             };
             let _ = tier; // suppress unused
             if requires_slug(approval_tier) {
-                let expected_slug: String = approval.id.chars().rev().take(6).collect::<String>().chars().rev().collect();
+                let expected_slug: String = approval
+                    .id
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
                 match &params.slug {
-                    None => return Response::err(req.id, errcodes::INVALID_REQUEST, "R3 approval requires a slug confirmation"),
-                    Some(s) if s != &expected_slug => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("slug mismatch: expected '{expected_slug}'")),
+                    None => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            "R3 approval requires a slug confirmation",
+                        )
+                    }
+                    Some(s) if s != &expected_slug => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("slug mismatch: expected '{expected_slug}'"),
+                        )
+                    }
                     Some(_) => {}
                 }
             }
             let now = ctx.clock.now_ms();
             if params.verdict == "approve" {
                 // Decide the approval as approved
-                let decided = match ctx.store.decide_approval(
-                    params.id.clone(),
-                    "approved".to_string(),
-                    now,
-                    "cli".to_string(),
-                    params.note.clone(),
-                ).await {
+                let decided = match ctx
+                    .store
+                    .decide_approval(
+                        params.id.clone(),
+                        "approved".to_string(),
+                        now,
+                        "cli".to_string(),
+                        params.note.clone(),
+                    )
+                    .await
+                {
                     Ok(a) => a,
                     Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
                 };
@@ -504,18 +714,37 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 if decided.kind == "merge_back" {
                     match ctx.task_runner.execute_merge(&decided).await {
                         Ok(_outcome) => {}
-                        Err(e) => return Response::err(req.id, errcodes::INTERNAL, format!("execute_merge failed: {e}")),
+                        Err(e) => {
+                            return Response::err(
+                                req.id,
+                                errcodes::INTERNAL,
+                                format!("execute_merge failed: {e}"),
+                            )
+                        }
                     }
                 }
                 // Re-fetch to return updated state
                 match ctx.store.get_approval(params.id).await {
-                    Ok(Some(a)) => Response::ok(req.id, serde_json::to_value(approval_to_dto(a)).expect("serializes")),
-                    _ => Response::ok(req.id, serde_json::to_value(approval_to_dto(decided)).expect("serializes")),
+                    Ok(Some(a)) => Response::ok(
+                        req.id,
+                        serde_json::to_value(approval_to_dto(a)).expect("serializes"),
+                    ),
+                    _ => Response::ok(
+                        req.id,
+                        serde_json::to_value(approval_to_dto(decided)).expect("serializes"),
+                    ),
                 }
             } else {
                 // deny
-                match ctx.task_runner.deny(&params.id, params.note.as_deref()).await {
-                    Ok(a) => Response::ok(req.id, serde_json::to_value(approval_to_dto(a)).expect("serializes")),
+                match ctx
+                    .task_runner
+                    .deny(&params.id, params.note.as_deref())
+                    .await
+                {
+                    Ok(a) => Response::ok(
+                        req.id,
+                        serde_json::to_value(approval_to_dto(a)).expect("serializes"),
+                    ),
                     Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
                 }
             }
@@ -523,10 +752,19 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
         methods::WORKBENCH_MERGE_BACK => {
             let params: WorkbenchMergeBackParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
-                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
             };
             match ctx.task_runner.merge_back(&params.run_id).await {
-                Ok(approval) => Response::ok(req.id, serde_json::to_value(approval_to_dto(approval)).expect("serializes")),
+                Ok(approval) => Response::ok(
+                    req.id,
+                    serde_json::to_value(approval_to_dto(approval)).expect("serializes"),
+                ),
                 Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             }
         }
@@ -547,19 +785,34 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
                 return Response::err(req.id, errcodes::INTERNAL, "pin service unavailable");
             };
             let params: PinsPinRecentParams = if req.params.is_null() {
-                PinsPinRecentParams { media: "screen".into(), minutes: 5 }
+                PinsPinRecentParams {
+                    media: "screen".into(),
+                    minutes: 5,
+                }
             } else {
                 match serde_json::from_value(req.params) {
                     Ok(p) => p,
-                    Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
                 }
             };
             let media = match media_from_str(&params.media) {
                 Ok(m) => m,
                 Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             };
-            match service.pin_recent(media, params.minutes, PinKind::Manual, "manual pin_recent").await {
-                Ok(pin) => Response::ok(req.id, serde_json::to_value(pin_to_dto(pin)).expect("serializes")),
+            match service
+                .pin_recent(media, params.minutes, PinKind::Manual, "manual pin_recent")
+                .await
+            {
+                Ok(pin) => Response::ok(
+                    req.id,
+                    serde_json::to_value(pin_to_dto(pin)).expect("serializes"),
+                ),
                 Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             }
         }
@@ -569,16 +822,314 @@ async fn dispatch(line: &str, hello_done: &mut bool, ctx: &ServerCtx) -> Respons
             };
             let params: PinsUnpinParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
-                Err(e) => return Response::err(req.id, errcodes::INVALID_REQUEST, format!("bad params: {e}")),
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
             };
             match service.unpin(&params.id).await {
                 Ok(()) => Response::ok(req.id, serde_json::Value::Null),
                 Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
             }
         }
-        other => {
-            Response::err(req.id, errcodes::METHOD_NOT_FOUND, format!("unknown method: {other}"))
+        methods::RING_STATUS => {
+            let Some(service) = &ctx.pins else {
+                return Response::err(req.id, errcodes::INTERNAL, "pin service unavailable");
+            };
+            match service.ring_status() {
+                Ok(status) => {
+                    Response::ok(req.id, serde_json::to_value(status).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
         }
+        methods::RETENTION_STATUS => match ctx.store.get_retention_status().await {
+            Ok(Some(status)) => {
+                let dto = RetentionStatusDto {
+                    last_run_ms: status.last_run_ms,
+                    observations_deleted: status.observations_deleted,
+                    pins_expired: status.pins_expired,
+                    api_calls_deleted: status.api_calls_deleted,
+                };
+                Response::ok(req.id, serde_json::to_value(Some(dto)).expect("serializes"))
+            }
+            Ok(None) => Response::ok(req.id, serde_json::Value::Null),
+            Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+        },
+        methods::VOICE_STATUS => {
+            let result = VoiceStatusDto {
+                enabled: false,
+                prewake_ring_secs: 8,
+                backends: vec![
+                    unavailable_backend("mic", "mic feature not built"),
+                    unavailable_backend("wake", "wake feature not built"),
+                    unavailable_backend("vad", "wake feature not built"),
+                    unavailable_backend("stt", "stt feature not built"),
+                    unavailable_backend("tts", "tts feature not built"),
+                ],
+            };
+            Response::ok(req.id, serde_json::to_value(result).expect("serializes"))
+        }
+        methods::VOICE_UTTERANCES => {
+            let params: RecentParams = if req.params.is_null() {
+                RecentParams::default()
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            match ctx
+                .store
+                .recent_voice_utterances(params.limit.min(1000))
+                .await
+            {
+                Ok(rows) => {
+                    let dtos: Vec<VoiceUtteranceDto> =
+                        rows.into_iter().map(voice_utterance_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::TERMINALS_LIST => match ctx.store.list_terminals().await {
+            Ok(rows) => {
+                let dtos: Vec<TerminalDto> = rows.into_iter().map(terminal_to_dto).collect();
+                Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+            }
+            Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+        },
+        methods::TERMINALS_SET_ROLE => {
+            let params: TerminalsSetRoleParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
+            };
+            if !matches!(
+                params.role.as_str(),
+                "operator" | "workbench" | "foreign" | "ignored"
+            ) {
+                return Response::err(
+                    req.id,
+                    errcodes::INVALID_REQUEST,
+                    "role must be operator|workbench|foreign|ignored",
+                );
+            }
+            let terminal = match ctx.store.get_terminal(params.id.clone()).await {
+                Ok(Some(row)) => row,
+                Ok(None) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("terminal {} not found", params.id),
+                    )
+                }
+                Err(e) => return Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            };
+            let updated = rat_store::rows::NewTerminal {
+                tty: terminal.tty,
+                pid: terminal.pid,
+                emulator: terminal.emulator,
+                tmux_target: terminal.tmux_target,
+                role: params.role,
+                project_id: terminal.project_id,
+                cmd_hash: terminal.cmd_hash,
+                meta: terminal.meta,
+            };
+            match ctx.store.upsert_terminal(updated).await {
+                Ok(row) => Response::ok(
+                    req.id,
+                    serde_json::to_value(terminal_to_dto(row)).expect("serializes"),
+                ),
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::DOTFILE_EDITS_LIST => {
+            let params: RecentParams = if req.params.is_null() {
+                RecentParams::default()
+            } else {
+                match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Response::err(
+                            req.id,
+                            errcodes::INVALID_REQUEST,
+                            format!("bad params: {e}"),
+                        )
+                    }
+                }
+            };
+            match ctx.store.recent_dotfile_edits(params.limit.min(1000)).await {
+                Ok(rows) => {
+                    let dtos: Vec<DotfileEditDto> =
+                        rows.into_iter().map(dotfile_edit_to_dto).collect();
+                    Response::ok(req.id, serde_json::to_value(dtos).expect("serializes"))
+                }
+                Err(e) => Response::err(req.id, errcodes::INTERNAL, e.to_string()),
+            }
+        }
+        methods::DOTFILE_EDITS_APPLY => {
+            let params: DotfileEditsApplyParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
+            };
+            match apply_dotfile_edit(ctx, params).await {
+                Ok(row) => Response::ok(
+                    req.id,
+                    serde_json::to_value(dotfile_edit_to_dto(row)).expect("serializes"),
+                ),
+                Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
+            }
+        }
+        methods::DOTFILE_EDITS_REVERT => {
+            let params: DotfileEditsRevertParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Response::err(
+                        req.id,
+                        errcodes::INVALID_REQUEST,
+                        format!("bad params: {e}"),
+                    )
+                }
+            };
+            match revert_dotfile_edit(ctx, &params.id).await {
+                Ok(row) => Response::ok(
+                    req.id,
+                    serde_json::to_value(dotfile_edit_to_dto(row)).expect("serializes"),
+                ),
+                Err(e) => Response::err(req.id, errcodes::INVALID_REQUEST, e.to_string()),
+            }
+        }
+        other => Response::err(
+            req.id,
+            errcodes::METHOD_NOT_FOUND,
+            format!("unknown method: {other}"),
+        ),
+    }
+}
+
+async fn apply_dotfile_edit(
+    ctx: &ServerCtx,
+    params: DotfileEditsApplyParams,
+) -> anyhow::Result<rat_store::rows::DotfileEdit> {
+    let kind = config_kind_from_str(&params.kind)?;
+    let snapshot = rat_dotfile::apply_atomic(
+        std::path::Path::new(&params.path),
+        kind,
+        params.contents.as_bytes(),
+        &rat_dotfile::PathCommandResolver,
+    )?;
+    let now = ctx.clock.now_ms();
+    let before = ctx.store.insert_blob(snapshot.before, now).await?;
+    let after = ctx.store.insert_blob(snapshot.after, now).await?;
+    let row = ctx
+        .store
+        .insert_dotfile_edit(NewDotfileEdit {
+            path: snapshot.path.display().to_string(),
+            kind: params.kind,
+            before_blob: before.id,
+            after_blob: after.id,
+            diff: snapshot.diff,
+            reason: params.reason,
+            source: params.source,
+            risk: params.risk,
+            applied: true,
+            meta: params.meta,
+        })
+        .await?;
+    Ok(row)
+}
+
+fn config_kind_from_str(kind: &str) -> anyhow::Result<rat_dotfile::ConfigKind> {
+    match kind {
+        "json" => Ok(rat_dotfile::ConfigKind::Json),
+        "jsonc" => Ok(rat_dotfile::ConfigKind::Jsonc),
+        "toml" => Ok(rat_dotfile::ConfigKind::Toml),
+        "yaml" | "yml" => Ok(rat_dotfile::ConfigKind::Yaml),
+        "text" => Ok(rat_dotfile::ConfigKind::Text),
+        other => anyhow::bail!("unsupported config kind: {other}"),
+    }
+}
+
+async fn revert_dotfile_edit(
+    ctx: &ServerCtx,
+    id: &str,
+) -> anyhow::Result<rat_store::rows::DotfileEdit> {
+    let original = ctx
+        .store
+        .get_dotfile_edit(id.to_string())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("dotfile edit {id} not found"))?;
+    if original.reverted_by.is_some() {
+        anyhow::bail!("dotfile edit {id} is already reverted");
+    }
+    let before_blob = ctx
+        .store
+        .get_blob(original.before_blob.clone())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("before blob {} not found", original.before_blob))?;
+    let after_blob = ctx
+        .store
+        .get_blob(original.after_blob.clone())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("after blob {} not found", original.after_blob))?;
+
+    let snapshot = rat_dotfile::DotfileSnapshot {
+        path: std::path::PathBuf::from(&original.path),
+        before: before_blob.bytes,
+        after: after_blob.bytes,
+        diff: original.diff.clone(),
+    };
+    let reverted = rat_dotfile::revert(&snapshot)?;
+    let now = ctx.clock.now_ms();
+    let current_blob = ctx.store.insert_blob(reverted.before.clone(), now).await?;
+    let restored_blob = ctx.store.insert_blob(reverted.after.clone(), now).await?;
+    let revert_row = ctx
+        .store
+        .insert_dotfile_edit(NewDotfileEdit {
+            path: original.path.clone(),
+            kind: original.kind.clone(),
+            before_blob: current_blob.id,
+            after_blob: restored_blob.id,
+            diff: reverted.diff,
+            reason: format!("revert {}", original.id),
+            source: "rat-dotfile".to_string(),
+            risk: original.risk,
+            applied: true,
+            meta: serde_json::json!({ "reverts": original.id }),
+        })
+        .await?;
+    ctx.store
+        .mark_dotfile_edit_reverted(original.id, revert_row.id.clone())
+        .await?;
+    Ok(revert_row)
+}
+
+fn unavailable_backend(name: &str, reason: &str) -> VoiceBackendStatusDto {
+    VoiceBackendStatusDto {
+        name: name.to_string(),
+        state: "unavailable".to_string(),
+        reason: Some(reason.to_string()),
     }
 }
 
@@ -598,6 +1149,33 @@ fn pushback_to_dto(pb: rat_store::rows::Pushback) -> PushbackDto {
         status: pb.status,
         decided_at: pb.decided_at,
         latency_ms: pb.latency_ms,
+    }
+}
+
+fn memory_to_dto(memory: rat_store::rows::Memory) -> MemoryDto {
+    MemoryDto {
+        id: memory.id,
+        r#type: memory.r#type,
+        project_id: memory.project_id,
+        title: memory.title,
+        body: memory.body,
+        confidence: memory.confidence,
+        created: memory.created,
+        updated: memory.updated,
+        source_event_ids: memory.source_event_ids,
+        archived: memory.archived,
+    }
+}
+
+fn disclosure_to_dto(disclosure: rat_store::rows::Disclosure) -> DisclosureDto {
+    DisclosureDto {
+        id: disclosure.id,
+        ts: disclosure.ts,
+        api_call_id: disclosure.api_call_id,
+        model: disclosure.model,
+        purpose: disclosure.purpose,
+        memory_ids: disclosure.memory_ids,
+        observation_ids: disclosure.observation_ids,
     }
 }
 
@@ -622,6 +1200,7 @@ fn agent_run_to_dto(r: rat_store::rows::AgentRun) -> AgentRunDto {
 }
 
 fn approval_to_dto(a: rat_store::rows::Approval) -> ApprovalDto {
+    let spoken_slug = rat_voice::spoken_slug(&a.id);
     ApprovalDto {
         id: a.id,
         created: a.created,
@@ -640,6 +1219,53 @@ fn approval_to_dto(a: rat_store::rows::Approval) -> ApprovalDto {
         decided_via: a.decided_via,
         decision_note: a.decision_note,
         execution: a.execution,
+        spoken_slug,
+    }
+}
+
+fn voice_utterance_to_dto(v: rat_store::rows::VoiceUtterance) -> VoiceUtteranceDto {
+    VoiceUtteranceDto {
+        id: v.id,
+        ts: v.ts,
+        lang: v.lang,
+        text: v.text,
+        intent: v.intent,
+        wake_word: v.wake_word,
+        handled: v.handled,
+    }
+}
+
+fn terminal_to_dto(t: rat_store::rows::Terminal) -> TerminalDto {
+    TerminalDto {
+        id: t.id,
+        tty: t.tty,
+        pid: t.pid,
+        emulator: t.emulator,
+        tmux_target: t.tmux_target,
+        role: t.role,
+        project_id: t.project_id,
+        cmd_hash: t.cmd_hash,
+        first_seen: t.first_seen,
+        last_seen: t.last_seen,
+        meta: t.meta,
+    }
+}
+
+fn dotfile_edit_to_dto(e: rat_store::rows::DotfileEdit) -> DotfileEditDto {
+    DotfileEditDto {
+        id: e.id,
+        path: e.path,
+        kind: e.kind,
+        before_blob: e.before_blob,
+        after_blob: e.after_blob,
+        diff: e.diff,
+        reason: e.reason,
+        source: e.source,
+        risk: e.risk,
+        created: e.created,
+        applied: e.applied,
+        reverted_by: e.reverted_by,
+        meta: e.meta,
     }
 }
 

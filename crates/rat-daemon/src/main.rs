@@ -9,9 +9,9 @@ use clap::Parser;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
-use rat_brain::backend::{BackendConfig, Provider, make_backend};
-use rat_brain::keys;
+use rat_brain::backend::{make_backend, BackendConfig, Provider};
 use rat_brain::critic::Critic;
+use rat_brain::keys;
 use rat_core::clock::{Clock, SystemClock};
 use rat_core::paths;
 use rat_daemon::capture::run_capture_tick;
@@ -20,16 +20,20 @@ use rat_daemon::ingest::Ingest;
 use rat_daemon::memory_searcher::DaemonMemorySearcher;
 use rat_daemon::mode::{self, ModeManager};
 use rat_daemon::pins::{KeyringPinKeyStore, PinService};
-use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
-use rat_workbench::runner::TaskRunner;
-use rat_workbench::tmux::Tmux;
+use rat_daemon::sensors_health::SensorGate;
+use rat_daemon::server::{serve, LlmStatusState, ServerCtx};
 use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
 use rat_memory::embed::EmbeddingClient;
-use rat_proto::NewEvent;
+use rat_proto::{NewEvent, NewObservation};
 use rat_ring::{RingKey, RingWriter};
 use rat_sensors::gitwatch::{self, HeadState};
 use rat_sensors::proc::{proc_detail, scan_procs, ProcWatcher, ALLOWLIST};
+use rat_store::rows::NewTerminal;
 use rat_store::store::Store;
+use rat_terminal::{classify, ClassifierConfig, ProcSource, RealProcSource};
+use rat_workbench::runner::TaskRunner;
+use rat_workbench::tmux::Tmux;
+use rat_workbench::{AgentAdapter, ClaudeCode, Codex};
 
 /// RATO daemon: observes, remembers, critiques.
 #[derive(Parser)]
@@ -96,7 +100,11 @@ async fn main() -> anyhow::Result<()> {
     let mode = Arc::new(ModeManager::new(clock.now_ms()));
 
     ingest
-        .ingest(NewEvent { kind: "daemon_started".into(), source: "ratd".into(), ..Default::default() })
+        .ingest(NewEvent {
+            kind: "daemon_started".into(),
+            source: "ratd".into(),
+            ..Default::default()
+        })
         .await?;
 
     if !args.no_sensors {
@@ -131,27 +139,26 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let llm_key = keys::get_key(provider.clone()).ok();
-    let backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
-        llm_key.as_ref().map(|key| {
-            make_backend(
-                &BackendConfig {
-                    provider: provider.clone(),
-                    base_url: None,
-                    critic_model: config.llm.critic_model.clone(),
-                    cheap_model: config.llm.cheap_model.clone(),
-                },
-                key.clone(),
-            )
-        });
+    let backend: Option<Box<dyn rat_brain::backend::ChatBackend>> = llm_key.as_ref().map(|key| {
+        make_backend(
+            &BackendConfig {
+                provider: provider.clone(),
+                base_url: None,
+                critic_model: config.llm.critic_model.clone(),
+                cheap_model: config.llm.cheap_model.clone(),
+            },
+            key.clone(),
+        )
+    });
 
     // EmbeddingClient (OpenAI embeddings regardless of critic provider)
     let openai_key = std::env::var("RATO_OPENAI_KEY")
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| keys::get_key(Provider::OpenAi).ok());
-    let embedder: Option<EmbeddingClient> = openai_key.as_ref().map(|key| {
-        EmbeddingClient::new("https://api.openai.com".to_string(), key.clone())
-    });
+    let embedder: Option<EmbeddingClient> = openai_key
+        .as_ref()
+        .map(|key| EmbeddingClient::new("https://api.openai.com".to_string(), key.clone()));
 
     let critic_enabled = config.critic.enabled && !args.no_critic && backend.is_some();
 
@@ -168,7 +175,10 @@ async fn main() -> anyhow::Result<()> {
     if critic_enabled {
         let backend_box = backend.unwrap(); // safe since critic_enabled requires it
         let memory_searcher: Option<Box<dyn rat_brain::critic::MemorySearcher>> =
-            Some(Box::new(DaemonMemorySearcher { embedder: embedder.clone(), llm_status: llm_status.clone() }));
+            Some(Box::new(DaemonMemorySearcher {
+                embedder: embedder.clone(),
+                llm_status: llm_status.clone(),
+            }));
         let critic = Arc::new(Critic::new(
             store.clone(),
             backend_box,
@@ -183,14 +193,10 @@ async fn main() -> anyhow::Result<()> {
             let fast_s = config.critic.fast_tick_s;
             let slow_s = config.critic.slow_tick_s;
             tokio::spawn(async move {
-                let mut fast_interval =
-                    tokio::time::interval(Duration::from_secs(fast_s));
-                fast_interval
-                    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                let mut slow_interval =
-                    tokio::time::interval(Duration::from_secs(slow_s));
-                slow_interval
-                    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut fast_interval = tokio::time::interval(Duration::from_secs(fast_s));
+                fast_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut slow_interval = tokio::time::interval(Duration::from_secs(slow_s));
+                slow_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     tokio::select! {
                         _ = fast_interval.tick() => {
@@ -254,9 +260,11 @@ async fn main() -> anyhow::Result<()> {
                 loop {
                     interval.tick().await;
                     // embedding may have been disabled at runtime (4xx from the API)
-                    let embedder_now = embedder_h
-                        .as_ref()
-                        .filter(|_| llm_status_h.embedding_enabled.load(std::sync::atomic::Ordering::Relaxed));
+                    let embedder_now = embedder_h.as_ref().filter(|_| {
+                        llm_status_h
+                            .embedding_enabled
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    });
                     if let Err(e) = rat_memory::jobs::hourly(
                         &store_h,
                         hourly_backend.as_deref(),
@@ -273,41 +281,6 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
         }
-
-        // Nightly loop (next 03:30 UTC, then every 24h)
-        {
-            let store_n = store.clone();
-            let clock_n = clock.clone();
-            let llm_status_n = llm_status.clone();
-            // Create a backend for nightly day-summary generation (mirrors the hourly backend)
-            let nightly_backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
-                llm_key.as_ref().map(|key| {
-                    make_backend(
-                        &BackendConfig {
-                            provider: provider.clone(),
-                            base_url: None,
-                            critic_model: config.llm.critic_model.clone(),
-                            cheap_model: config.llm.cheap_model.clone(),
-                        },
-                        key.clone(),
-                    )
-                });
-            tokio::spawn(async move {
-                let delay_secs = secs_until_0330();
-                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-                loop {
-                    if let Err(e) =
-                        rat_memory::jobs::nightly(&store_n, nightly_backend.as_deref(), &clock_n).await
-                    {
-                        tracing::warn!("nightly job error: {e}");
-                        if let Ok(mut last_error) = llm_status_n.last_error.lock() {
-                            *last_error = Some(e.to_string());
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_secs(86400)).await;
-                }
-            });
-        }
     } else {
         tracing::info!(
             "critic disabled (--no-critic={}, key_present={}, config.enabled={})",
@@ -317,7 +290,51 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    tracing::info!("ratd {} listening on {}", env!("CARGO_PKG_VERSION"), socket.display());
+    // Nightly maintenance (next 03:30 UTC, then every 24h). Retention/decay must run
+    // even when the critic is disabled or no LLM key is present; day summaries are
+    // skipped by rat_memory::jobs::nightly when backend is None.
+    {
+        let store_n = store.clone();
+        let clock_n = clock.clone();
+        let llm_status_n = llm_status.clone();
+        let nightly_backend: Option<Box<dyn rat_brain::backend::ChatBackend>> =
+            (config.critic.enabled && !args.no_critic)
+                .then(|| {
+                    llm_key.as_ref().map(|key| {
+                        make_backend(
+                            &BackendConfig {
+                                provider: provider.clone(),
+                                base_url: None,
+                                critic_model: config.llm.critic_model.clone(),
+                                cheap_model: config.llm.cheap_model.clone(),
+                            },
+                            key.clone(),
+                        )
+                    })
+                })
+                .flatten();
+        tokio::spawn(async move {
+            let delay_secs = secs_until_0330();
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            loop {
+                if let Err(e) =
+                    rat_memory::jobs::nightly(&store_n, nightly_backend.as_deref(), &clock_n).await
+                {
+                    tracing::warn!("nightly job error: {e}");
+                    if let Ok(mut last_error) = llm_status_n.last_error.lock() {
+                        *last_error = Some(e.to_string());
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(86400)).await;
+            }
+        });
+    }
+
+    tracing::info!(
+        "ratd {} listening on {}",
+        env!("CARGO_PKG_VERSION"),
+        socket.display()
+    );
     tracing::info!("event store at {}", db.display());
 
     let task_runner = TaskRunner::new(store.clone(), Tmux::new("rato"), clock.clone());
@@ -342,8 +359,17 @@ async fn main() -> anyhow::Result<()> {
         clock.clone(),
     );
 
+    let sensors = Arc::new(SensorGate::new());
+
     if !args.no_sensors {
-        spawn_capture_loop(store.clone(), screen_ring.clone(), ring_key.clone(), pin_service.clone());
+        spawn_capture_loop(
+            store.clone(),
+            screen_ring.clone(),
+            ring_key.clone(),
+            pin_service.clone(),
+            sensors.clone(),
+            config.capture.clone(),
+        );
     }
 
     // Approval expiry sweep: expire pending approvals every 60s
@@ -400,6 +426,7 @@ async fn main() -> anyhow::Result<()> {
         llm_status,
         task_runner,
         pins: Some(pin_service),
+        sensors,
     });
 
     tokio::select! {
@@ -473,6 +500,9 @@ fn spawn_sensors(store: Store, ingest: Arc<Ingest>, mode: Arc<ModeManager>, cloc
 
     // git watcher: 10 s HEAD polling for recently-active projects
     {
+        spawn_terminal_scan_loop(store.clone());
+        spawn_transcript_ingest_loop(store.clone());
+
         let ingest = ingest.clone();
         let clock = clock.clone();
         tokio::spawn(async move {
@@ -490,8 +520,13 @@ fn spawn_sensors(store: Store, ingest: Arc<Ingest>, mode: Arc<ModeManager>, cloc
                     }
                 };
                 let now = clock.now_ms();
-                for p in projects.into_iter().filter(|p| now - p.last_seen < ACTIVE_WINDOW_MS) {
-                    let Some(head) = gitwatch::read_head(Path::new(&p.root_path)) else { continue };
+                for p in projects
+                    .into_iter()
+                    .filter(|p| now - p.last_seen < ACTIVE_WINDOW_MS)
+                {
+                    let Some(head) = gitwatch::read_head(Path::new(&p.root_path)) else {
+                        continue;
+                    };
                     let first_sighting = !heads.contains_key(&p.id);
                     let changed = heads.get(&p.id) != Some(&head);
                     if changed {
@@ -522,11 +557,187 @@ fn spawn_sensors(store: Store, ingest: Arc<Ingest>, mode: Arc<ModeManager>, cloc
     tokio::spawn(mode::run(mode, ingest, clock));
 }
 
+fn spawn_terminal_scan_loop(store: Store) {
+    tokio::spawn(async move {
+        let source = RealProcSource;
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Err(e) = scan_and_store_terminals(&store, &source).await {
+                tracing::debug!("terminal scan failed: {e}");
+            }
+        }
+    });
+}
+
+fn spawn_transcript_ingest_loop(store: Store) {
+    tokio::spawn(async move {
+        let mut seen = load_recent_transcript_keys(&store).await;
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Err(e) = ingest_agent_transcripts(&store, &mut seen).await {
+                tracing::debug!("transcript ingest failed: {e}");
+            }
+        }
+    });
+}
+
+async fn load_recent_transcript_keys(store: &Store) -> HashSet<String> {
+    store
+        .recent_observations(1000, Some("agent_output".to_string()))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|obs| {
+            obs.meta
+                .get("transcript_key")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+async fn ingest_agent_transcripts(
+    store: &Store,
+    seen: &mut HashSet<String>,
+) -> anyhow::Result<u32> {
+    let mut inserted = 0;
+    for run in store.recent_agent_runs(100).await? {
+        let Some(adapter) = adapter_for_name(&run.adapter) else {
+            continue;
+        };
+        let worktree = PathBuf::from(&run.worktree_path);
+        for dir in adapter.transcript_dirs(&worktree) {
+            for path in collect_jsonl_files(&dir, 200) {
+                let Some(key) = transcript_key(&path) else {
+                    continue;
+                };
+                if seen.contains(&key) {
+                    continue;
+                }
+                let Some(content) = adapter.parse_transcript(&path) else {
+                    seen.insert(key);
+                    continue;
+                };
+                store
+                    .add_observation(NewObservation {
+                        event_id: None,
+                        kind: "agent_output".to_string(),
+                        project_id: Some(run.project_id.clone()),
+                        content,
+                        meta: json!({
+                            "adapter": run.adapter,
+                            "run_id": run.id,
+                            "transcript_path": path,
+                            "transcript_key": key,
+                        }),
+                    })
+                    .await?;
+                seen.insert(key);
+                inserted += 1;
+            }
+        }
+    }
+    Ok(inserted)
+}
+
+fn adapter_for_name(name: &str) -> Option<Box<dyn AgentAdapter>> {
+    match name {
+        "claude-code" => Some(Box::new(ClaudeCode)),
+        "codex" => Some(Box::new(Codex)),
+        _ => None,
+    }
+}
+
+fn collect_jsonl_files(root: &Path, max_files: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_jsonl_files_inner(root, max_files, &mut out);
+    out.sort();
+    out
+}
+
+fn collect_jsonl_files_inner(path: &Path, max_files: usize, out: &mut Vec<PathBuf>) {
+    if out.len() >= max_files {
+        return;
+    }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.is_file() {
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            out.push(path.to_path_buf());
+        }
+        return;
+    }
+    if !meta.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        collect_jsonl_files_inner(&entry.path(), max_files, out);
+        if out.len() >= max_files {
+            break;
+        }
+    }
+}
+
+fn transcript_key(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let modified_ns = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    Some(format!("{}:{}:{}", path.display(), meta.len(), modified_ns))
+}
+
+async fn scan_and_store_terminals<S: ProcSource>(store: &Store, source: &S) -> anyhow::Result<()> {
+    let mut config = ClassifierConfig::default();
+    for terminal in store.list_terminals().await? {
+        match terminal.role.as_str() {
+            "ignored" => {
+                config.ignored_hashes.insert(terminal.cmd_hash);
+            }
+            "operator" => {
+                config.operator_hashes.insert(terminal.cmd_hash);
+            }
+            _ => {}
+        }
+    }
+
+    for hit in classify(source, &config) {
+        store
+            .upsert_terminal(NewTerminal {
+                tty: hit.tty,
+                pid: hit.pid,
+                emulator: hit.emulator.unwrap_or_else(|| "unknown".to_string()),
+                tmux_target: hit.tmux_target,
+                role: hit.role.as_str().to_string(),
+                project_id: None,
+                cmd_hash: hit.cmd_hash,
+                meta: json!({ "adapter": hit.adapter }),
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 fn spawn_capture_loop(
     store: Store,
     ring: Arc<RingWriter>,
     ring_key: Arc<RingKey>,
     pins: PinService,
+    sensors: Arc<SensorGate>,
+    capture_config: rat_daemon::config::CaptureConfig,
 ) {
     tokio::spawn(async move {
         #[cfg(feature = "screencast")]
@@ -540,12 +751,22 @@ fn spawn_capture_loop(
         let ocr = rat_vision::ocr::NullOcr;
 
         let mut pipeline = rat_vision::pipeline::CapturePipeline::new(source, ocr);
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        let interval_secs = capture_config.screen_interval_secs.max(1);
+        let screen_enabled = capture_config.screen;
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
-            if let Err(e) =
-                run_capture_tick(&mut pipeline, ring.as_ref(), ring_key.as_ref(), &store, Some(&pins)).await
+            if let Err(e) = run_capture_tick(
+                &mut pipeline,
+                ring.as_ref(),
+                ring_key.as_ref(),
+                &store,
+                Some(&pins),
+                sensors.as_ref(),
+                screen_enabled,
+            )
+            .await
             {
                 tracing::warn!("capture tick failed: {e}");
             }
@@ -569,8 +790,10 @@ async fn shutdown_signal() {
 /// DST/leap imprecision is acceptable.
 fn secs_until_0330() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now_secs =
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     secs_until_0330_from(now_secs)
 }
 
@@ -590,7 +813,14 @@ fn secs_until_0330_from(now_secs: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::secs_until_0330_from;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    use super::{ingest_agent_transcripts, scan_and_store_terminals, secs_until_0330_from};
+    use rat_core::clock::{Clock, FakeClock};
+    use rat_store::rows::{NewAgentRun, NewTerminal};
+    use rat_store::store::Store;
+    use rat_terminal::{command_hash, ProcEntry, ProcSource, TmuxPane};
 
     // 03:30 UTC = 12600 seconds into the day.
     // Use a fixed day: 2024-01-01 00:00:00 UTC = 1704067200
@@ -616,5 +846,120 @@ mod tests {
         // 1 second after 03:30 — next is nearly 24h away
         let now = DAY_START + TARGET + 1;
         assert_eq!(secs_until_0330_from(now), 86400 - 1);
+    }
+
+    struct FakeTerminalSource {
+        processes: Vec<ProcEntry>,
+        panes: Vec<TmuxPane>,
+    }
+
+    impl ProcSource for FakeTerminalSource {
+        fn processes(&self) -> Vec<ProcEntry> {
+            self.processes.clone()
+        }
+
+        fn tmux_panes(&self) -> Vec<TmuxPane> {
+            self.panes.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_scan_upserts_hits_and_preserves_ignored_hashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn Clock> = FakeClock::at(10_000);
+        let store = Store::open(&tmp.path().join("rato.db"), clock).unwrap();
+        let ignored_cmdline = vec!["claude".to_string(), "--private".to_string()];
+        let ignored_hash = command_hash(&ignored_cmdline);
+        store
+            .upsert_terminal(NewTerminal {
+                tty: "/dev/pts/8".into(),
+                pid: 10,
+                emulator: "kitty".into(),
+                tmux_target: None,
+                role: "ignored".into(),
+                project_id: None,
+                cmd_hash: ignored_hash,
+                meta: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let source = FakeTerminalSource {
+            processes: vec![
+                ProcEntry {
+                    pid: 20,
+                    ppid: Some(19),
+                    cmdline: vec!["codex".into()],
+                    tty: Some("/dev/pts/9".into()),
+                },
+                ProcEntry {
+                    pid: 21,
+                    ppid: None,
+                    cmdline: ignored_cmdline,
+                    tty: Some("/dev/pts/8".into()),
+                },
+            ],
+            panes: vec![],
+        };
+
+        scan_and_store_terminals(&store, &source).await.unwrap();
+        let rows = store.list_terminals().await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let codex = rows.iter().find(|row| row.pid == 20).unwrap();
+        assert_eq!(codex.role, "foreign");
+        assert_eq!(codex.meta["adapter"], "codex");
+        let ignored = rows.iter().find(|row| row.tty == "/dev/pts/8").unwrap();
+        assert_eq!(ignored.role, "ignored");
+    }
+
+    #[tokio::test]
+    async fn transcript_ingest_records_agent_output_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn Clock> = FakeClock::at(20_000);
+        let store = Store::open(&tmp.path().join("rato.db"), clock).unwrap();
+        let worktree = tmp.path().join("worktree");
+        let transcript_dir = worktree.join(".codex/sessions/nested");
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        std::fs::write(
+            transcript_dir.join("session.jsonl"),
+            "{\"role\":\"assistant\",\"content\":\"implemented scanner\"}\n",
+        )
+        .unwrap();
+        let run = store
+            .insert_agent_run(NewAgentRun {
+                adapter: "codex".into(),
+                task_title: "scan transcripts".into(),
+                project_id: "project-1".into(),
+                worktree_path: worktree.display().to_string(),
+                branch: "rato/test".into(),
+                tmux_target: None,
+                mode: "headless".into(),
+                tokens: serde_json::json!({}),
+                cost_usd: 0.0,
+                started: 20_000,
+            })
+            .await
+            .unwrap();
+
+        let mut seen = HashSet::new();
+        assert_eq!(
+            ingest_agent_transcripts(&store, &mut seen).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            ingest_agent_transcripts(&store, &mut seen).await.unwrap(),
+            0
+        );
+
+        let observations = store
+            .recent_observations(10, Some("agent_output".into()))
+            .await
+            .unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].project_id.as_deref(), Some("project-1"));
+        assert_eq!(observations[0].content, "implemented scanner");
+        assert_eq!(observations[0].meta["adapter"], "codex");
+        assert_eq!(observations[0].meta["run_id"], run.id);
+        assert!(observations[0].meta["transcript_key"].is_string());
     }
 }

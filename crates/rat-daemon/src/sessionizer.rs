@@ -9,8 +9,15 @@ pub const DEFAULT_GAP_MS: i64 = 25 * 60 * 1000;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionUpdate {
     Open(WorkSession),
-    Touch { id: String, last_activity: i64, commands: u32 },
-    Close { id: String, ended: i64 },
+    Touch {
+        id: String,
+        last_activity: i64,
+        commands: u32,
+    },
+    Close {
+        id: String,
+        ended: i64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +36,10 @@ pub struct Sessionizer {
 
 impl Sessionizer {
     pub fn new(gap_ms: i64) -> Self {
-        Self { gap_ms, open: HashMap::new() }
+        Self {
+            gap_ms,
+            open: HashMap::new(),
+        }
     }
 
     /// Re-adopt sessions left open by a previous daemon run.
@@ -37,12 +47,21 @@ impl Sessionizer {
         for ws in sessions {
             self.open.insert(
                 ws.project_id.clone(),
-                OpenSession { id: ws.id.clone(), last_activity: ws.last_activity, commands: ws.commands },
+                OpenSession {
+                    id: ws.id.clone(),
+                    last_activity: ws.last_activity,
+                    commands: ws.commands,
+                },
             );
         }
     }
 
-    pub fn on_activity(&mut self, project_id: &str, ts: i64, is_command: bool) -> Vec<SessionUpdate> {
+    pub fn on_activity(
+        &mut self,
+        project_id: &str,
+        ts: i64,
+        is_command: bool,
+    ) -> Vec<SessionUpdate> {
         let mut updates = Vec::new();
         match self.open.get_mut(project_id) {
             Some(open) if ts - open.last_activity <= self.gap_ms => {
@@ -58,7 +77,10 @@ impl Sessionizer {
             }
             stale => {
                 if let Some(old) = stale {
-                    updates.push(SessionUpdate::Close { id: old.id.clone(), ended: old.last_activity });
+                    updates.push(SessionUpdate::Close {
+                        id: old.id.clone(),
+                        ended: old.last_activity,
+                    });
                 }
                 let ws = WorkSession {
                     id: new_id(),
@@ -70,7 +92,11 @@ impl Sessionizer {
                 };
                 self.open.insert(
                     project_id.to_string(),
-                    OpenSession { id: ws.id.clone(), last_activity: ts, commands: ws.commands },
+                    OpenSession {
+                        id: ws.id.clone(),
+                        last_activity: ts,
+                        commands: ws.commands,
+                    },
                 );
                 updates.push(SessionUpdate::Open(ws));
             }
@@ -90,7 +116,10 @@ impl Sessionizer {
         let mut updates = Vec::new();
         for project in stale {
             if let Some(s) = self.open.remove(&project) {
-                updates.push(SessionUpdate::Close { id: s.id, ended: s.last_activity });
+                updates.push(SessionUpdate::Close {
+                    id: s.id,
+                    ended: s.last_activity,
+                });
             }
         }
         updates
@@ -119,7 +148,14 @@ mod tests {
         let first = s.on_activity("p1", 1_000, true);
         assert_eq!(opens(&first).len(), 1);
         let second = s.on_activity("p1", 60_000, true);
-        assert!(matches!(second[0], SessionUpdate::Touch { commands: 2, last_activity: 60_000, .. }));
+        assert!(matches!(
+            second[0],
+            SessionUpdate::Touch {
+                commands: 2,
+                last_activity: 60_000,
+                ..
+            }
+        ));
         assert!(s.tick(60_000 + GAP).is_empty()); // exactly at gap: still open
         assert_eq!(s.tick(60_000 + GAP + 1).len(), 1); // strictly past gap: closed
     }
@@ -133,7 +169,9 @@ mod tests {
         };
         let updates = s.on_activity("p1", 1_000 + GAP + 1, true);
         assert_eq!(updates.len(), 2);
-        assert!(matches!(&updates[0], SessionUpdate::Close { id, ended: 1_000 } if *id == first_id));
+        assert!(
+            matches!(&updates[0], SessionUpdate::Close { id, ended: 1_000 } if *id == first_id)
+        );
         assert_eq!(opens(&updates).len(), 1);
         assert_ne!(opens(&updates)[0].id, first_id);
     }
@@ -143,8 +181,14 @@ mod tests {
         let mut s = Sessionizer::new(GAP);
         s.on_activity("p1", 1_000, true);
         s.on_activity("p2", 2_000, true);
-        assert!(matches!(s.on_activity("p1", 3_000, true)[0], SessionUpdate::Touch { .. }));
-        assert!(matches!(s.on_activity("p2", 4_000, false)[0], SessionUpdate::Touch { commands: 1, .. }));
+        assert!(matches!(
+            s.on_activity("p1", 3_000, true)[0],
+            SessionUpdate::Touch { .. }
+        ));
+        assert!(matches!(
+            s.on_activity("p2", 4_000, false)[0],
+            SessionUpdate::Touch { commands: 1, .. }
+        ));
     }
 
     #[test]
@@ -154,9 +198,15 @@ mod tests {
         s.on_activity("fresh", 1_000 + GAP, true);
         let updates = s.tick(1_000 + GAP + 1);
         assert_eq!(updates.len(), 1);
-        assert!(matches!(&updates[0], SessionUpdate::Close { ended: 1_000, .. }));
+        assert!(matches!(
+            &updates[0],
+            SessionUpdate::Close { ended: 1_000, .. }
+        ));
         // fresh still open: next activity touches it
-        assert!(matches!(s.on_activity("fresh", 1_000 + GAP + 2, false)[0], SessionUpdate::Touch { .. }));
+        assert!(matches!(
+            s.on_activity("fresh", 1_000 + GAP + 2, false)[0],
+            SessionUpdate::Touch { .. }
+        ));
     }
 
     #[test]

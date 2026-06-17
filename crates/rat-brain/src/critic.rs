@@ -184,7 +184,10 @@ impl Critic {
         let mut obs_lines = String::new();
         for o in &digest_obs {
             let snippet: String = o.content.chars().take(200).collect();
-            obs_lines.push_str(&format!("id={} kind={} content={}\n", o.id, o.kind, snippet));
+            obs_lines.push_str(&format!(
+                "id={} kind={} content={}\n",
+                o.id, o.kind, snippet
+            ));
         }
 
         // Git observations summary
@@ -220,7 +223,13 @@ impl Critic {
 
         let memory_ids: Vec<String> = if let Some(searcher) = &self.memory_searcher {
             searcher
-                .search(&self.store, &self.clock, signal_text.clone(), project_id.clone(), 8)
+                .search(
+                    &self.store,
+                    &self.clock,
+                    signal_text.clone(),
+                    project_id.clone(),
+                    8,
+                )
                 .await
                 .into_iter()
                 .map(|h| h.id)
@@ -233,7 +242,11 @@ impl Critic {
         let signal_desc = signals
             .iter()
             .map(|s| match s {
-                Signal::StuckLoop { cmd, count, obs_ids } => {
+                Signal::StuckLoop {
+                    cmd,
+                    count,
+                    obs_ids,
+                } => {
                     format!(
                         "StuckLoop: command '{}' failed {} times, obs_ids: {:?}",
                         cmd, count, obs_ids
@@ -374,8 +387,7 @@ impl Critic {
         // Helper closure to build NewPushback
         let build_pb = |status: &str| -> NewPushback {
             let evidence_val = serde_json::to_value(&valid_evidence).unwrap_or_default();
-            let proposals_val =
-                serde_json::to_value(&verdict.proposed_actions).unwrap_or_default();
+            let proposals_val = serde_json::to_value(&verdict.proposed_actions).unwrap_or_default();
             NewPushback {
                 mode: self.mode.clone(),
                 trigger: trigger.to_string(),
@@ -415,7 +427,11 @@ impl Critic {
         let dedupe_key = Governor::dedupe_key(&evidence_ids);
 
         let since_24h = now - 86_400_000;
-        let recent_pbs = self.store.pushbacks_since(since_24h).await.unwrap_or_default();
+        let recent_pbs = self
+            .store
+            .pushbacks_since(since_24h)
+            .await
+            .unwrap_or_default();
 
         let is_dupe = recent_pbs.iter().any(|pb| {
             if let Some(ev_arr) = pb.evidence.as_array() {

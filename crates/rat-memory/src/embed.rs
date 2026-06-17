@@ -20,16 +20,27 @@ pub struct EmbeddingClient {
 
 impl EmbeddingClient {
     pub fn new(base_url: impl Into<String>, key: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), key: key.into(), client: Client::new() }
+        Self {
+            base_url: base_url.into(),
+            key: key.into(),
+            client: Client::new(),
+        }
     }
 
     /// Embed a batch of strings (≤128, each truncated to 2000 chars).
     /// Returns a Vec<Vec<f32>> of the same length.
     pub async fn embed_batch(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
-        let truncated: Vec<&str> = inputs.iter().map(|s| {
-            let end = s.char_indices().nth(2000).map(|(i, _)| i).unwrap_or(s.len());
-            &s[..end]
-        }).collect();
+        let truncated: Vec<&str> = inputs
+            .iter()
+            .map(|s| {
+                let end = s
+                    .char_indices()
+                    .nth(2000)
+                    .map(|(i, _)| i)
+                    .unwrap_or(s.len());
+                &s[..end]
+            })
+            .collect();
 
         let body = serde_json::json!({
             "model": "text-embedding-3-small",
@@ -37,7 +48,8 @@ impl EmbeddingClient {
         });
 
         let url = format!("{}/v1/embeddings", self.base_url);
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .bearer_auth(&self.key)
             .json(&body)
@@ -61,7 +73,10 @@ impl EmbeddingClient {
             let emb = item["embedding"].as_array().ok_or_else(|| {
                 EmbedError::BadJson(serde_json::from_str::<serde_json::Value>("bad").unwrap_err())
             })?;
-            let vec: Vec<f32> = emb.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect();
+            let vec: Vec<f32> = emb
+                .iter()
+                .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                .collect();
             result.push(vec);
         }
         Ok(result)
@@ -89,7 +104,11 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
         norm_b += bi * bi;
     }
     let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom == 0.0 { 0.0 } else { dot / denom }
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
 }
 
 #[cfg(test)]
@@ -118,8 +137,8 @@ mod tests {
 
     #[tokio::test]
     async fn embed_batch_happy_path() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -134,15 +153,18 @@ mod tests {
             .await;
 
         let client = EmbeddingClient::new(server.uri(), "test-key");
-        let result = client.embed_batch(&["hello".to_string(), "world".to_string()]).await.unwrap();
+        let result = client
+            .embed_batch(&["hello".to_string(), "world".to_string()])
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
         assert!((result[0][0] - 0.1).abs() < 1e-6);
     }
 
     #[tokio::test]
     async fn embed_truncates_long_input() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
 

@@ -58,10 +58,7 @@ pub fn repo_hash(repo_root: &Path) -> Result<String> {
 // ---------------------------------------------------------------------------
 
 fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .output()?;
+    let out = Command::new("git").current_dir(dir).args(args).output()?;
     if out.status.success() {
         Ok(String::from_utf8(out.stdout)?)
     } else {
@@ -73,10 +70,7 @@ fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn git_in_raw(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, Vec<u8>)> {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .output()?;
+    let out = Command::new("git").current_dir(dir).args(args).output()?;
     Ok((out.status.success(), out.stdout, out.stderr))
 }
 
@@ -102,9 +96,7 @@ pub fn create(repo_root: &Path, task_id: &str, slug: &str, base: &str) -> Result
     }
 
     // Resolve the base ref to a commit SHA so it stays stable.
-    let base_sha = git_in(repo_root, &["rev-parse", base])?
-        .trim()
-        .to_string();
+    let base_sha = git_in(repo_root, &["rev-parse", base])?.trim().to_string();
 
     let branch = format!("rato/{}", slug);
     let path_str = worktrees_dir
@@ -225,7 +217,10 @@ fn git_version() -> (u32, u32) {
         .take(2)
         .map(|s| s.parse().unwrap_or(0))
         .collect();
-    (nums.first().copied().unwrap_or(0), nums.get(1).copied().unwrap_or(0))
+    (
+        nums.first().copied().unwrap_or(0),
+        nums.get(1).copied().unwrap_or(0),
+    )
 }
 
 /// `true` if `git merge-tree --write-tree` is available (git ≥ 2.38).
@@ -291,8 +286,10 @@ fn is_fast_mergeable_via_clone(repo_root: &Path, branch: &str) -> Result<bool> {
     let _ = git_in(&clone_dir, &["checkout", "-b", branch, "FETCH_HEAD"]);
 
     // Try the merge dry-run
-    let result =
-        git_in_raw(&clone_dir, &["merge", "--no-commit", "--no-ff", "FETCH_HEAD"])?;
+    let result = git_in_raw(
+        &clone_dir,
+        &["merge", "--no-commit", "--no-ff", "FETCH_HEAD"],
+    )?;
     // Abort the merge to leave clone clean (not strictly necessary but tidy)
     let _ = git_in(&clone_dir, &["merge", "--abort"]);
     let _ = fs::remove_dir_all(&clone_dir);

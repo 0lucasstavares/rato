@@ -66,10 +66,12 @@ pub fn get_key(p: Provider) -> Result<String, LlmError> {
 
     // 2. keyring
     let name = provider_name(&p).to_string();
-    off_runtime(move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
-        Ok(entry) => entry.get_password().map_err(|_| LlmError::MissingKey(name)),
-        Err(_) => Err(LlmError::MissingKey(name)),
-    })
+    off_runtime(
+        move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
+            Ok(entry) => entry.get_password().map_err(|_| LlmError::MissingKey(name)),
+            Err(_) => Err(LlmError::MissingKey(name)),
+        },
+    )
 }
 
 /// Store the API key for the given provider in the system keyring.
@@ -79,17 +81,23 @@ pub fn set_key(p: Provider, value: &str) -> Result<(), LlmError> {
     off_runtime(move || {
         let entry = keyring::Entry::new(keyring_service(), keyring_account(&p))
             .map_err(|_| LlmError::MissingKey(name.clone()))?;
-        entry.set_password(&value).map_err(|_| LlmError::MissingKey(name))
+        entry
+            .set_password(&value)
+            .map_err(|_| LlmError::MissingKey(name))
     })
 }
 
 /// Get an arbitrary RATO secret from Secret Service.
 pub fn get_secret(account: &str) -> Result<String, LlmError> {
     let account = account.to_string();
-    off_runtime(move || match keyring::Entry::new(keyring_service(), &account) {
-        Ok(entry) => entry.get_password().map_err(|_| LlmError::MissingKey(account)),
-        Err(_) => Err(LlmError::MissingKey(account)),
-    })
+    off_runtime(
+        move || match keyring::Entry::new(keyring_service(), &account) {
+            Ok(entry) => entry
+                .get_password()
+                .map_err(|_| LlmError::MissingKey(account)),
+            Err(_) => Err(LlmError::MissingKey(account)),
+        },
+    )
 }
 
 /// Store an arbitrary RATO secret in Secret Service.
@@ -99,7 +107,9 @@ pub fn set_secret(account: &str, value: &str) -> Result<(), LlmError> {
     off_runtime(move || {
         let entry = keyring::Entry::new(keyring_service(), &account)
             .map_err(|_| LlmError::MissingKey(account.clone()))?;
-        entry.set_password(&value).map_err(|_| LlmError::MissingKey(account))
+        entry
+            .set_password(&value)
+            .map_err(|_| LlmError::MissingKey(account))
     })
 }
 
@@ -113,19 +123,25 @@ pub fn key_present(p: Provider) -> bool {
     }
 
     // keyring
-    off_runtime(move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
-        Ok(entry) => entry.get_password().is_ok(),
-        Err(_) => false,
-    })
+    off_runtime(
+        move || match keyring::Entry::new(keyring_service(), keyring_account(&p)) {
+            Ok(entry) => entry.get_password().is_ok(),
+            Err(_) => false,
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn env_override_openai() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::OpenAi);
         env::set_var(key, "sk-test-openai");
         let result = get_key(Provider::OpenAi).unwrap();
@@ -135,6 +151,7 @@ mod tests {
 
     #[test]
     fn env_override_anthropic() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::Anthropic);
         env::set_var(key, "sk-ant-test");
         let result = get_key(Provider::Anthropic).unwrap();
@@ -144,6 +161,7 @@ mod tests {
 
     #[test]
     fn env_override_openrouter() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::OpenRouter);
         env::set_var(key, "sk-or-test");
         let result = get_key(Provider::OpenRouter).unwrap();
@@ -153,6 +171,7 @@ mod tests {
 
     #[test]
     fn key_present_via_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::Anthropic);
         env::remove_var(key);
         env::set_var(key, "test-ant-key");
@@ -162,6 +181,7 @@ mod tests {
 
     #[test]
     fn key_from_env_helper() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::OpenAi);
         env::remove_var(key);
         assert_eq!(key_from_env(&Provider::OpenAi), None);
@@ -172,6 +192,7 @@ mod tests {
 
     #[test]
     fn missing_key_returns_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = env_var_name(&Provider::OpenRouter);
         env::remove_var(key);
         // The machine keyring may legitimately hold rato/openrouter (it does on
@@ -179,7 +200,10 @@ mod tests {
         // shape when the keyring genuinely lacks the entry.
         let result = get_key(Provider::OpenRouter);
         if key_present(Provider::OpenRouter) {
-            assert!(result.is_ok(), "key present in keyring → get_key must return it");
+            assert!(
+                result.is_ok(),
+                "key present in keyring → get_key must return it"
+            );
         } else {
             assert!(matches!(result, Err(LlmError::MissingKey(_))));
         }

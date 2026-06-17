@@ -1,6 +1,8 @@
-use serde_json::{json, Value};
-use crate::backend::{BackendConfig, ChatBackend, ChatRequest, ChatResponse, Provider, Role, Route};
+use crate::backend::{
+    BackendConfig, ChatBackend, ChatRequest, ChatResponse, Provider, Role, Route,
+};
 use crate::error::LlmError;
+use serde_json::{json, Value};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const DEFAULT_CRITIC_MODEL: &str = "gpt-5.1";
@@ -17,23 +19,36 @@ pub struct OpenAiResponsesBackend {
 impl OpenAiResponsesBackend {
     pub fn new(cfg: &BackendConfig, key: String) -> Self {
         Self {
-            base_url: cfg.base_url.clone().unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            base_url: cfg
+                .base_url
+                .clone()
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             key,
-            critic_model: cfg.critic_model.clone().unwrap_or_else(|| DEFAULT_CRITIC_MODEL.to_string()),
-            cheap_model: cfg.cheap_model.clone().unwrap_or_else(|| DEFAULT_CHEAP_MODEL.to_string()),
+            critic_model: cfg
+                .critic_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CRITIC_MODEL.to_string()),
+            cheap_model: cfg
+                .cheap_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CHEAP_MODEL.to_string()),
             http: reqwest::Client::new(),
         }
     }
 
     fn build_body(&self, req: &ChatRequest, model: &str) -> Value {
-        let input: Vec<Value> = req.messages.iter().map(|m| {
-            let role = match m.role {
-                Role::System => "system",
-                Role::User => "user",
-                Role::Assistant => "assistant",
-            };
-            json!({ "role": role, "content": m.content })
-        }).collect();
+        let input: Vec<Value> = req
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                json!({ "role": role, "content": m.content })
+            })
+            .collect();
 
         json!({
             "model": model,
@@ -55,7 +70,8 @@ impl OpenAiResponsesBackend {
 
     async fn do_request(&self, body: &Value) -> Result<reqwest::Response, LlmError> {
         let url = format!("{}/v1/responses", self.base_url);
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .bearer_auth(&self.key)
             .json(body)
@@ -108,7 +124,10 @@ impl ChatBackend for OpenAiResponsesBackend {
     }
 }
 
-async fn parse_openai_response(resp: reqwest::Response, model: &str) -> Result<ChatResponse, LlmError> {
+async fn parse_openai_response(
+    resp: reqwest::Response,
+    model: &str,
+) -> Result<ChatResponse, LlmError> {
     let val: Value = resp.json().await?;
 
     // Extract text from output[].content[] where type == "output_text"
@@ -144,10 +163,12 @@ async fn parse_openai_response(resp: reqwest::Response, model: &str) -> Result<C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{BackendConfig, ChatMessage, ChatRequest, ChatBackend, Provider, Route, Role};
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path, body_json};
+    use crate::backend::{
+        BackendConfig, ChatBackend, ChatMessage, ChatRequest, Provider, Role, Route,
+    };
     use serde_json::json;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_backend(server: &MockServer) -> OpenAiResponsesBackend {
         let cfg = BackendConfig {
@@ -162,9 +183,10 @@ mod tests {
     fn make_request() -> ChatRequest {
         ChatRequest {
             system: "You are a helpful assistant.".to_string(),
-            messages: vec![
-                ChatMessage { role: Role::User, content: "Hello".to_string() },
-            ],
+            messages: vec![ChatMessage {
+                role: Role::User,
+                content: "Hello".to_string(),
+            }],
             json_schema: json!({ "type": "object", "properties": { "result": { "type": "string" } }, "required": ["result"], "additionalProperties": false }),
             schema_name: "test_schema".to_string(),
             route: Route::Critic,
@@ -223,7 +245,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/responses"))
             .and(body_json(&expected_body))
-            .respond_with(ResponseTemplate::new(200).set_body_json(realistic_openai_response("gpt-5.1")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(realistic_openai_response("gpt-5.1")),
+            )
             .mount(&server)
             .await;
 
@@ -251,7 +275,9 @@ mod tests {
         // Second call → 200
         Mock::given(method("POST"))
             .and(path("/v1/responses"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(realistic_openai_response("gpt-5.1")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(realistic_openai_response("gpt-5.1")),
+            )
             .mount(&server)
             .await;
 

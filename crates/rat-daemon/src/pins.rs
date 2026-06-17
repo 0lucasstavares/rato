@@ -5,6 +5,7 @@ use anyhow::{anyhow, Context};
 use rand::RngCore;
 use rat_core::clock::Clock;
 use rat_core::id::new_id;
+use rat_proto::RingMediaStatusDto;
 use rat_ring::{seal, Media, RingKey, RingWriter};
 use rat_store::rows::{NewPin, Pin};
 use rat_store::store::Store;
@@ -157,6 +158,25 @@ impl PinService {
 
     pub async fn list(&self) -> anyhow::Result<Vec<Pin>> {
         self.store.list_pins().await.context("listing pins")
+    }
+
+    pub fn ring_status(&self) -> anyhow::Result<Vec<RingMediaStatusDto>> {
+        [Media::Screen, Media::Audio, Media::Clipboard]
+            .into_iter()
+            .map(|media| {
+                let segments = self
+                    .ring
+                    .list_segments(media)
+                    .with_context(|| format!("listing {} ring segments", media.as_str()))?;
+                Ok(RingMediaStatusDto {
+                    media: media.as_str().to_string(),
+                    segment_count: segments.len() as u32,
+                    oldest_ms: segments.first().map(|s| s.created_ms),
+                    newest_ms: segments.last().map(|s| s.created_ms),
+                    ttl_secs: self.ring.ttl_secs,
+                })
+            })
+            .collect()
     }
 
     pub async fn unpin(&self, id: &str) -> anyhow::Result<()> {

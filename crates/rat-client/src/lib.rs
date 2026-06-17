@@ -6,7 +6,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
 
-use rat_proto::{methods, HelloParams, HelloResult, Request, Response, StatusResult, PROTO_VERSION};
+use rat_proto::{
+    methods, HelloParams, HelloResult, Request, Response, StatusResult, PROTO_VERSION,
+};
 
 /// One NDJSON-RPC connection to ratd, hello handshake included.
 pub struct Client {
@@ -21,12 +23,18 @@ impl Client {
             .await
             .with_context(|| format!("connecting to {} (is ratd running?)", socket.display()))?;
         let (r, w) = stream.into_split();
-        let mut client = Self { lines: BufReader::new(r).lines(), w, next_id: 0 };
+        let mut client = Self {
+            lines: BufReader::new(r).lines(),
+            w,
+            next_id: 0,
+        };
         let hello: HelloResult = serde_json::from_value(
             client
                 .call(
                     methods::HELLO,
-                    serde_json::to_value(HelloParams { proto_version: PROTO_VERSION })?,
+                    serde_json::to_value(HelloParams {
+                        proto_version: PROTO_VERSION,
+                    })?,
                 )
                 .await?,
         )?;
@@ -41,11 +49,19 @@ impl Client {
 
     pub async fn call(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         self.next_id += 1;
-        let req = Request { id: self.next_id, method: method.to_string(), params };
+        let req = Request {
+            id: self.next_id,
+            method: method.to_string(),
+            params,
+        };
         let mut buf = serde_json::to_vec(&req)?;
         buf.push(b'\n');
         self.w.write_all(&buf).await?;
-        let line = self.lines.next_line().await?.context("daemon closed the connection")?;
+        let line = self
+            .lines
+            .next_line()
+            .await?
+            .context("daemon closed the connection")?;
         let resp: Response = serde_json::from_str(&line)?;
         if let Some(err) = resp.error {
             anyhow::bail!("rpc error {}: {}", err.code, err.message);
@@ -54,7 +70,9 @@ impl Client {
     }
 
     pub async fn status(&mut self) -> anyhow::Result<StatusResult> {
-        Ok(serde_json::from_value(self.call(methods::STATUS, json!({})).await?)?)
+        Ok(serde_json::from_value(
+            self.call(methods::STATUS, json!({})).await?,
+        )?)
     }
 }
 
@@ -67,7 +85,10 @@ pub struct ManagedClient {
 
 impl ManagedClient {
     pub fn new(socket: PathBuf) -> Self {
-        Self { socket, inner: None }
+        Self {
+            socket,
+            inner: None,
+        }
     }
 
     /// True when a live (or freshly re-established) connection exists.
@@ -109,7 +130,7 @@ mod tests {
 
     use rat_daemon::ingest::Ingest;
     use rat_daemon::mode::ModeManager;
-    use rat_daemon::server::{LlmStatusState, serve, ServerCtx};
+    use rat_daemon::server::{serve, LlmStatusState, ServerCtx};
     use rat_daemon::sessionizer::{Sessionizer, DEFAULT_GAP_MS};
     use rat_store::store::Store;
     use rat_workbench::runner::TaskRunner;
@@ -128,7 +149,10 @@ mod tests {
             let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
             let joined = std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
                 rt.block_on(async move {
                     let clock: Arc<dyn rat_core::clock::Clock> =
                         Arc::new(rat_core::clock::SystemClock);
@@ -139,7 +163,11 @@ mod tests {
                         Sessionizer::new(DEFAULT_GAP_MS),
                     ));
                     let mode = Arc::new(ModeManager::new(0));
-                    let task_runner = TaskRunner::new(store.clone(), Tmux::new(format!("rato-test-{}", std::process::id())), clock.clone());
+                    let task_runner = TaskRunner::new(
+                        store.clone(),
+                        Tmux::new(format!("rato-test-{}", std::process::id())),
+                        clock.clone(),
+                    );
                     let ctx = Arc::new(ServerCtx {
                         store,
                         ingest,
@@ -151,6 +179,7 @@ mod tests {
                         llm_status: LlmStatusState::disabled(),
                         task_runner,
                         pins: None,
+                        sensors: Arc::new(rat_daemon::sensors_health::SensorGate::new()),
                     });
                     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
                     ready_tx.send(()).unwrap();
@@ -162,7 +191,10 @@ mod tests {
                 // runtime drops here, killing all connection tasks
             });
             ready_rx.recv().unwrap();
-            Self { stop: Some(stop), joined: Some(joined) }
+            Self {
+                stop: Some(stop),
+                joined: Some(joined),
+            }
         }
 
         fn shutdown(mut self) {
@@ -202,7 +234,9 @@ mod tests {
         let mut c = Client::connect(&socket).await.unwrap();
 
         let pbs: Vec<rat_proto::PushbackDto> = serde_json::from_value(
-            c.call(rat_proto::methods::PUSHBACKS_RECENT, Value::Null).await.unwrap(),
+            c.call(rat_proto::methods::PUSHBACKS_RECENT, Value::Null)
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert!(pbs.is_empty());
@@ -239,7 +273,9 @@ mod tests {
         let mut c = Client::connect(&socket).await.unwrap();
 
         let s: rat_proto::LlmStatusResult = serde_json::from_value(
-            c.call(rat_proto::methods::LLM_STATUS, Value::Null).await.unwrap(),
+            c.call(rat_proto::methods::LLM_STATUS, Value::Null)
+                .await
+                .unwrap(),
         )
         .unwrap();
         // With disabled LlmStatusState: provider="openai", critic_enabled=false

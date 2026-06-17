@@ -21,11 +21,23 @@ impl MemorySearcher for DaemonMemorySearcher {
         project_id: Option<String>,
         n: usize,
     ) -> Vec<MemoryHit> {
-        let embedder = self
-            .embedder
-            .as_ref()
-            .filter(|_| self.llm_status.embedding_enabled.load(std::sync::atomic::Ordering::Relaxed));
-        match search(store, embedder, clock, SearchParams { query, project_id, n }).await {
+        let embedder = self.embedder.as_ref().filter(|_| {
+            self.llm_status
+                .embedding_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+        });
+        match search(
+            store,
+            embedder,
+            clock,
+            SearchParams {
+                query,
+                project_id,
+                n,
+            },
+        )
+        .await
+        {
             Ok(hits) => hits.into_iter().map(|h| MemoryHit { id: h.id }).collect(),
             Err(e) => {
                 let msg = e.to_string();

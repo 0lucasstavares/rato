@@ -21,3 +21,4 @@ wiremock = "0.6"
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 rat-core = { path = "../rat-core" }
+proptest = "1"

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub llm: LlmConfig,
     pub critic: CriticConfig,
+    pub capture: CaptureConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,13 +27,42 @@ pub struct CriticConfig {
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self { provider: "openai".to_string(), critic_model: None, cheap_model: None }
+        Self {
+            provider: "openai".to_string(),
+            critic_model: None,
+            cheap_model: None,
+        }
     }
 }
 
 impl Default for CriticConfig {
     fn default() -> Self {
-        Self { enabled: true, fast_tick_s: 30, slow_tick_s: 300 }
+        Self {
+            enabled: true,
+            fast_tick_s: 30,
+            slow_tick_s: 300,
+        }
+    }
+}
+
+/// Screen-capture cadence + on/off knob (M5 §"seamlessness"). Capture is
+/// zero-ceremony: `screen = true` (default) means the capture loop runs
+/// whenever the backing `ScreenSource`/`OcrEngine` report `health() == Ok`.
+/// In default builds (no `screencast`/`ocr` features) health is
+/// `Unavailable`, so the loop stays inert regardless of this flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaptureConfig {
+    pub screen: bool,
+    pub screen_interval_secs: u64,
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        Self {
+            screen: true,
+            screen_interval_secs: 2,
+        }
     }
 }
 
@@ -59,14 +89,12 @@ impl Config {
     pub fn load_or_init(path: &std::path::Path) -> Config {
         if path.exists() {
             match std::fs::read_to_string(path) {
-                Ok(contents) => {
-                    match toml::from_str::<Config>(&contents) {
-                        Ok(cfg) => return cfg,
-                        Err(e) => {
-                            tracing::warn!("config parse error (using defaults): {e}");
-                        }
+                Ok(contents) => match toml::from_str::<Config>(&contents) {
+                    Ok(cfg) => return cfg,
+                    Err(e) => {
+                        tracing::warn!("config parse error (using defaults): {e}");
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!("config read error (using defaults): {e}");
                 }
@@ -100,12 +128,16 @@ mod tests {
         assert!(config.critic.enabled);
         assert_eq!(config.critic.fast_tick_s, 30);
         assert_eq!(config.critic.slow_tick_s, 300);
+        // capture defaults: zero-ceremony, always-on when healthy
+        assert!(config.capture.screen);
+        assert_eq!(config.capture.screen_interval_secs, 2);
         // File now exists
         assert!(path.exists());
         // Load again — same values
         let config2 = Config::load_or_init(&path);
         assert_eq!(config2.llm.provider, "openai");
         assert_eq!(config2.critic.fast_tick_s, 30);
+        assert!(config2.capture.screen);
     }
 
     #[test]
@@ -122,6 +154,10 @@ provider = "anthropic"
 enabled = false
 fast_tick_s = 60
 slow_tick_s = 600
+
+[capture]
+screen = false
+screen_interval_secs = 5
 "#,
         )
         .unwrap();
@@ -130,5 +166,7 @@ slow_tick_s = 600
         assert!(!config.critic.enabled);
         assert_eq!(config.critic.fast_tick_s, 60);
         assert_eq!(config.critic.slow_tick_s, 600);
+        assert!(!config.capture.screen);
+        assert_eq!(config.capture.screen_interval_secs, 5);
     }
 }

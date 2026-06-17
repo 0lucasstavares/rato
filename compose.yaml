@@ -1,0 +1,51 @@
+services:
+  ratd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RATO_UID: ${RATO_UID:-1000}
+        RATO_GID: ${RATO_GID:-1000}
+    image: rato:dev
+    command:
+      - ratd
+      - --socket
+      - /run/rato/ratd.sock
+      - --db
+      - /data/rato.db
+      - --no-sensors
+      - --no-critic
+    environment:
+      RAT_LOG: ${RAT_LOG:-info}
+    volumes:
+      - ./target/compose-run/config:/config
+      - ./target/compose-run/data:/data
+      - ./target/compose-run/run:/run
+      - ./target/compose-run/state:/state
+    restart: unless-stopped
+
+  rat:
+    image: rato:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RATO_UID: ${RATO_UID:-1000}
+        RATO_GID: ${RATO_GID:-1000}
+    profiles:
+      - cli
+    entrypoint:
+      - rat
+      - --socket
+      - /run/rato/ratd.sock
+    command:
+      - status
+    environment:
+      RAT_LOG: ${RAT_LOG:-info}
+    volumes:
+      - ./target/compose-run/config:/config
+      - ./target/compose-run/data:/data
+      - ./target/compose-run/run:/run
+      - ./target/compose-run/state:/state
+    depends_on:
+      - ratd

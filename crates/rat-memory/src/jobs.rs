@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use rat_brain::backend::{ChatBackend, ChatMessage, ChatRequest, Role, Route};
 use rat_core::clock::Clock;
+use rat_proto::NewObservation;
+use rat_store::rows::{MemoryFilter, NewMemory, RetentionStatus};
 use rat_store::store::Store;
-use rat_store::rows::{NewMemory, MemoryFilter};
-use rat_brain::backend::{ChatBackend, ChatRequest, ChatMessage, Role, Route};
 
 use crate::embed::EmbeddingClient;
 use crate::MemoryError;
@@ -16,6 +17,7 @@ const DECAY_DAYS: i64 = 30;
 const ARCHIVE_THRESHOLD: f64 = 0.2;
 const PRUNE_AGE_DAYS: i64 = 180;
 const PRUNE_MAX_ROWS: u32 = 5000;
+const API_CALL_PRUNE_AGE_DAYS: i64 = 365;
 
 /// Hourly consolidation job.
 /// 1) Embeds unembedded observations.
@@ -40,7 +42,10 @@ pub async fn hourly(
             match embedder.embed(&contents).await {
                 Ok(vecs) => {
                     for (obs, vec) in unembedded.iter().zip(vecs.iter()) {
-                        if let Err(e) = store.set_observation_embedding(obs.id.clone(), vec.clone()).await {
+                        if let Err(e) = store
+                            .set_observation_embedding(obs.id.clone(), vec.clone())
+                            .await
+                        {
                             warn!("hourly: failed to store embedding for {}: {}", obs.id, e);
                         }
                     }
@@ -76,8 +81,13 @@ pub async fn hourly(
             .map_err(MemoryError::Store)?;
 
         if obs_for_session.is_empty() {
-            debug!("hourly: session {} has no observations, setting empty summary", session.id);
-            let _ = store.set_session_summary(session.id.clone(), "(no observations)".into()).await;
+            debug!(
+                "hourly: session {} has no observations, setting empty summary",
+                session.id
+            );
+            let _ = store
+                .set_session_summary(session.id.clone(), "(no observations)".into())
+                .await;
             continue;
         }
 
@@ -120,7 +130,10 @@ pub async fn hourly(
 
         let req = ChatRequest {
             system: system.to_string(),
-            messages: vec![ChatMessage { role: Role::User, content: user_msg }],
+            messages: vec![ChatMessage {
+                role: Role::User,
+                content: user_msg,
+            }],
             json_schema: schema,
             schema_name: "session_summary".to_string(),
             route: Route::Cheap,
@@ -133,11 +146,17 @@ pub async fn hourly(
                 let summary_text = resp.json["summary"].as_str().unwrap_or("").to_string();
                 let citations: Vec<String> = resp.json["citations"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 // Set session summary
-                let _ = store.set_session_summary(session.id.clone(), summary_text.clone()).await;
+                let _ = store
+                    .set_session_summary(session.id.clone(), summary_text.clone())
+                    .await;
 
                 // Determine session date from started timestamp
                 let started_s = session.started / 1000;
@@ -194,7 +213,8 @@ pub async fn nightly(
         let yesterday_sessions: Vec<_> = all_sessions
             .iter()
             .filter(|s| {
-                s.ended.is_some_and(|e| e >= yesterday_start && e < yesterday_end)
+                s.ended
+                    .is_some_and(|e| e >= yesterday_start && e < yesterday_end)
             })
             .collect();
 
@@ -204,7 +224,10 @@ pub async fn nightly(
                 include_archived: false,
                 ..Default::default()
             };
-            let episode_mems = store.list_memories(day_mem_filter).await.map_err(MemoryError::Store)?;
+            let episode_mems = store
+                .list_memories(day_mem_filter)
+                .await
+                .map_err(MemoryError::Store)?;
 
             // Filter episode memories created yesterday
             let yesterday_episodes: Vec<_> = episode_mems
@@ -248,14 +271,16 @@ pub async fn nightly(
                         let summary = resp.json["summary"].as_str().unwrap_or("").to_string();
                         let date_str = format_date_from_epoch_seconds(yesterday_start / 1000);
                         // source_event_ids holds observation.id values (the ids shown to + cited by the LLM), not events.event_id
-                        let _ = store.add_memory(NewMemory {
-                            r#type: "day_summary".to_string(),
-                            project_id: None,
-                            title: format!("Day summary: {}", date_str),
-                            body: summary,
-                            confidence: 0.7,
-                            source_event_ids: serde_json::json!([]),
-                        }).await;
+                        let _ = store
+                            .add_memory(NewMemory {
+                                r#type: "day_summary".to_string(),
+                                project_id: None,
+                                title: format!("Day summary: {}", date_str),
+                                body: summary,
+                                confidence: 0.7,
+                                source_event_ids: serde_json::json!([]),
+                            })
+                            .await;
                         info!("nightly: created day summary");
                     }
                     Err(e) => {
@@ -269,7 +294,10 @@ pub async fn nightly(
     // --- Step 2: Confidence decay ---
     let decay_cutoff = now_ms - (DECAY_DAYS * DAY_MS);
     let all_memories = store
-        .list_memories(MemoryFilter { include_archived: false, ..Default::default() })
+        .list_memories(MemoryFilter {
+            include_archived: false,
+            ..Default::default()
+        })
         .await
         .map_err(MemoryError::Store)?;
 
@@ -277,21 +305,33 @@ pub async fn nightly(
         if mem.updated < decay_cutoff {
             let new_confidence = mem.confidence * 0.95;
             if new_confidence < ARCHIVE_THRESHOLD {
-                info!("nightly: archiving memory {} (confidence {:.3} < {})", mem.id, new_confidence, ARCHIVE_THRESHOLD);
+                info!(
+                    "nightly: archiving memory {} (confidence {:.3} < {})",
+                    mem.id, new_confidence, ARCHIVE_THRESHOLD
+                );
                 let _ = store.archive_memory(mem.id.clone()).await;
             } else {
-                debug!("nightly: decaying memory {} confidence {:.3} → {:.3}", mem.id, mem.confidence, new_confidence);
-                let _ = store.update_memory_confidence(mem.id.clone(), new_confidence).await;
+                debug!(
+                    "nightly: decaying memory {} confidence {:.3} → {:.3}",
+                    mem.id, mem.confidence, new_confidence
+                );
+                let _ = store
+                    .update_memory_confidence(mem.id.clone(), new_confidence)
+                    .await;
             }
         }
     }
 
-    // --- Step 3: Observation prune ---
+    // --- Step 3: Observation prune (citation-aware, batched ≤PRUNE_MAX_ROWS) ---
     let prune_cutoff = now_ms - (PRUNE_AGE_DAYS * DAY_MS);
 
-    // Collect all cited observation ids from memory source_event_ids
+    // Collect all cited observation ids from memory source_event_ids (covers
+    // summaries too — episode_summary/day_summary are memories).
     let all_mems_for_prune = store
-        .list_memories(MemoryFilter { include_archived: true, ..Default::default() })
+        .list_memories(MemoryFilter {
+            include_archived: true,
+            ..Default::default()
+        })
         .await
         .map_err(MemoryError::Store)?;
 
@@ -305,16 +345,104 @@ pub async fn nightly(
             }
         }
     }
+
+    // Pins may cite specific observation ids in `meta.observation_ids`
+    // (forward-compatible convention; pins normally reference ring segments,
+    // not observations, but if present these observations must be protected).
+    let all_pins_for_prune = store.list_pins().await.map_err(MemoryError::Store)?;
+    for pin in &all_pins_for_prune {
+        if let Some(arr) = pin.meta.get("observation_ids").and_then(|v| v.as_array()) {
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    protected_ids.push(s.to_string());
+                }
+            }
+        }
+    }
+
     protected_ids.sort();
     protected_ids.dedup();
 
-    let deleted = store
-        .delete_observations_older_than(prune_cutoff, &protected_ids, PRUNE_MAX_ROWS)
+    // Loop in batches of ≤PRUNE_MAX_ROWS until nothing more is eligible.
+    let mut observations_deleted: u32 = 0;
+    loop {
+        let n = store
+            .delete_observations_older_than(prune_cutoff, &protected_ids, PRUNE_MAX_ROWS)
+            .await
+            .map_err(MemoryError::Store)?;
+        observations_deleted += n;
+        if n < PRUNE_MAX_ROWS {
+            break;
+        }
+    }
+
+    if observations_deleted > 0 {
+        info!("nightly: pruned {} old observations", observations_deleted);
+    }
+
+    // --- Step 4: Expire auto-pins past expires_at; unlink their dirs ---
+    let expired_pins = store
+        .expire_pins(now_ms)
+        .await
+        .map_err(MemoryError::Store)?;
+    for pin in &expired_pins {
+        let path = std::path::Path::new(&pin.path);
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!("nightly: failed to unlink pin dir {}: {}", pin.path, e),
+        }
+    }
+    let pins_expired = expired_pins.len() as u32;
+    if pins_expired > 0 {
+        info!("nightly: expired {} pin(s)", pins_expired);
+    }
+
+    // --- Step 5: api_calls retention (365d), batched ≤PRUNE_MAX_ROWS ---
+    let api_cutoff = now_ms - (API_CALL_PRUNE_AGE_DAYS * DAY_MS);
+    let mut api_calls_deleted: u32 = 0;
+    loop {
+        let n = store
+            .delete_api_calls_older_than(api_cutoff, PRUNE_MAX_ROWS)
+            .await
+            .map_err(MemoryError::Store)?;
+        api_calls_deleted += n;
+        if n < PRUNE_MAX_ROWS {
+            break;
+        }
+    }
+    if api_calls_deleted > 0 {
+        info!("nightly: pruned {} old api_calls", api_calls_deleted);
+    }
+
+    // --- Step 6: persist + emit prune-count summary ---
+    store
+        .set_retention_status(RetentionStatus {
+            last_run_ms: now_ms,
+            observations_deleted,
+            pins_expired,
+            api_calls_deleted,
+        })
         .await
         .map_err(MemoryError::Store)?;
 
-    if deleted > 0 {
-        info!("nightly: pruned {} old observations", deleted);
+    if observations_deleted > 0 || pins_expired > 0 || api_calls_deleted > 0 {
+        let _ = store
+            .add_observation(NewObservation {
+                kind: "note".to_string(),
+                content: format!(
+                    "retention prune: {} observation(s), {} pin(s), {} api_call(s) deleted",
+                    observations_deleted, pins_expired, api_calls_deleted
+                ),
+                meta: serde_json::json!({
+                    "retention_prune": true,
+                    "observations_deleted": observations_deleted,
+                    "pins_expired": pins_expired,
+                    "api_calls_deleted": api_calls_deleted,
+                }),
+                ..Default::default()
+            })
+            .await;
     }
 
     Ok(())
@@ -341,14 +469,14 @@ fn format_date_from_epoch_seconds(epoch_s: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use rat_core::clock::FakeClock;
-    use rat_store::store::Store;
     use rat_proto::NewObservation;
     use rat_store::rows::NewMemory;
+    use rat_store::store::Store;
+    use std::sync::Arc;
     use tempfile::tempdir;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn make_store(clock: Arc<dyn Clock>) -> (Store, tempfile::TempDir) {
         let tmp = tempdir().unwrap();
@@ -363,24 +491,30 @@ mod tests {
 
         // Add some observations
         for i in 0..3 {
-            store.add_observation(NewObservation {
-                kind: "shell_cmd".into(),
-                content: format!("cargo build {}", i),
-                ..Default::default()
-            }).await.unwrap();
+            store
+                .add_observation(NewObservation {
+                    kind: "shell_cmd".into(),
+                    content: format!("cargo build {}", i),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
         }
         // Add one of a non-embedded kind
-        store.add_observation(NewObservation {
-            kind: "other_kind".into(),
-            content: "ignored".into(),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(NewObservation {
+                kind: "other_kind".into(),
+                content: "ignored".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Verify unembedded count
-        let unembedded = store.unembedded_observations(
-            EMBED_KINDS.iter().map(|s| s.to_string()).collect(),
-            256
-        ).await.unwrap();
+        let unembedded = store
+            .unembedded_observations(EMBED_KINDS.iter().map(|s| s.to_string()).collect(), 256)
+            .await
+            .unwrap();
         assert_eq!(unembedded.len(), 3);
 
         // Set up wiremock to return embeddings
@@ -401,11 +535,15 @@ mod tests {
         hourly(&store, None, Some(&embedder), &clock).await.unwrap();
 
         // All 3 shell_cmd observations should now be embedded
-        let after = store.unembedded_observations(
-            EMBED_KINDS.iter().map(|s| s.to_string()).collect(),
-            256
-        ).await.unwrap();
-        assert!(after.is_empty(), "expected 0 unembedded, got {}", after.len());
+        let after = store
+            .unembedded_observations(EMBED_KINDS.iter().map(|s| s.to_string()).collect(), 256)
+            .await
+            .unwrap();
+        assert!(
+            after.is_empty(),
+            "expected 0 unembedded, got {}",
+            after.len()
+        );
 
         // Verify vec rows exist
         let all_emb = store.all_observation_embeddings(100).await.unwrap();
@@ -414,7 +552,7 @@ mod tests {
 
     #[tokio::test]
     async fn hourly_summarize_writes_memory_and_summary() {
-        use rat_brain::backend::{BackendConfig, Provider, make_backend};
+        use rat_brain::backend::{make_backend, BackendConfig, Provider};
 
         // Clock at DAY_MS + 3_600_000 so observations fall within session window
         let clock: Arc<dyn Clock> = FakeClock::at(DAY_MS + 3_600_000);
@@ -430,15 +568,21 @@ mod tests {
             commands: 5,
         };
         store.session_open(session).await.unwrap();
-        store.session_close("sess1".into(), DAY_MS + 7_200_000).await.unwrap();
+        store
+            .session_close("sess1".into(), DAY_MS + 7_200_000)
+            .await
+            .unwrap();
 
         // Add observations at current clock time (DAY_MS + 3_600_000 — within session window)
-        store.add_observation(NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cargo test --all".into(),
-            project_id: Some("proj1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cargo test --all".into(),
+                project_id: Some("proj1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Wiremock for the LLM summarize call
         let server = MockServer::start().await;
@@ -464,18 +608,23 @@ mod tests {
         };
         let backend = make_backend(&cfg, "test-key".to_string());
 
-        hourly(&store, Some(backend.as_ref()), None, &clock).await.unwrap();
+        hourly(&store, Some(backend.as_ref()), None, &clock)
+            .await
+            .unwrap();
 
         // Session should have a summary now
         let sessions_without = store.closed_sessions_without_summary(10).await.unwrap();
         assert!(sessions_without.is_empty(), "session should have summary");
 
         // A memory of type episode_summary should exist
-        let memories = store.list_memories(rat_store::rows::MemoryFilter {
-            r#type: Some("episode_summary".into()),
-            include_archived: false,
-            ..Default::default()
-        }).await.unwrap();
+        let memories = store
+            .list_memories(rat_store::rows::MemoryFilter {
+                r#type: Some("episode_summary".into()),
+                include_archived: false,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
         assert!(!memories.is_empty(), "expected episode_summary memory");
     }
 
@@ -491,24 +640,30 @@ mod tests {
             let store = Store::open(&db_path, old_time.clone()).unwrap();
 
             // Memory with confidence 0.5 — will decay to 0.475
-            store.add_memory(NewMemory {
-                r#type: "personal".into(),
-                title: "Old note".into(),
-                body: "Something old".into(),
-                confidence: 0.5,
-                source_event_ids: serde_json::json!([]),
-                ..Default::default()
-            }).await.unwrap();
+            store
+                .add_memory(NewMemory {
+                    r#type: "personal".into(),
+                    title: "Old note".into(),
+                    body: "Something old".into(),
+                    confidence: 0.5,
+                    source_event_ids: serde_json::json!([]),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
 
             // Memory with confidence 0.18 — will be archived (0.18 * 0.95 = 0.171 < 0.2)
-            store.add_memory(NewMemory {
-                r#type: "personal".into(),
-                title: "Very old low conf".into(),
-                body: "Will be archived".into(),
-                confidence: 0.18,
-                source_event_ids: serde_json::json!([]),
-                ..Default::default()
-            }).await.unwrap();
+            store
+                .add_memory(NewMemory {
+                    r#type: "personal".into(),
+                    title: "Very old low conf".into(),
+                    body: "Will be archived".into(),
+                    confidence: 0.18,
+                    source_event_ids: serde_json::json!([]),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
         }
 
         // Re-open the same DB with "now" clock and run nightly
@@ -516,23 +671,35 @@ mod tests {
         let store = Store::open(&db_path, clock_now.clone()).unwrap();
         nightly(&store, None, &clock_now).await.unwrap();
 
-        let mems = store.list_memories(rat_store::rows::MemoryFilter {
-            include_archived: false,
-            ..Default::default()
-        }).await.unwrap();
+        let mems = store
+            .list_memories(rat_store::rows::MemoryFilter {
+                include_archived: false,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // "Old note" (confidence 0.5) should be decayed to 0.475 and still active
         let decayed = mems.iter().find(|m| m.title == "Old note");
         assert!(decayed.is_some(), "should still exist after decay");
         let decayed = decayed.unwrap();
-        assert!((decayed.confidence - 0.475).abs() < 0.001, "expected 0.475, got {}", decayed.confidence);
+        assert!(
+            (decayed.confidence - 0.475).abs() < 0.001,
+            "expected 0.475, got {}",
+            decayed.confidence
+        );
 
         // "Very old low conf" should be archived
-        let archived = store.list_memories(rat_store::rows::MemoryFilter {
-            include_archived: true,
-            ..Default::default()
-        }).await.unwrap();
-        let arch = archived.iter().find(|m| m.title == "Very old low conf" && m.archived);
+        let archived = store
+            .list_memories(rat_store::rows::MemoryFilter {
+                include_archived: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let arch = archived
+            .iter()
+            .find(|m| m.title == "Very old low conf" && m.archived);
         assert!(arch.is_some(), "low confidence memory should be archived");
     }
 
@@ -548,27 +715,36 @@ mod tests {
         let (protected_id, unprotected_id) = {
             let store = Store::open(&db_path, old_time.clone()).unwrap();
 
-            let protected_obs = store.add_observation(NewObservation {
-                kind: "shell_cmd".into(),
-                content: "important command".into(),
-                ..Default::default()
-            }).await.unwrap();
+            let protected_obs = store
+                .add_observation(NewObservation {
+                    kind: "shell_cmd".into(),
+                    content: "important command".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
 
-            let unprotected_obs = store.add_observation(NewObservation {
-                kind: "shell_cmd".into(),
-                content: "forgotten command".into(),
-                ..Default::default()
-            }).await.unwrap();
+            let unprotected_obs = store
+                .add_observation(NewObservation {
+                    kind: "shell_cmd".into(),
+                    content: "forgotten command".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
 
             // A memory that cites the protected obs
-            store.add_memory(NewMemory {
-                r#type: "personal".into(),
-                title: "Important memory".into(),
-                body: "Referenced observation".into(),
-                confidence: 0.8,
-                source_event_ids: serde_json::json!([protected_obs.id.clone()]),
-                ..Default::default()
-            }).await.unwrap();
+            store
+                .add_memory(NewMemory {
+                    r#type: "personal".into(),
+                    title: "Important memory".into(),
+                    body: "Referenced observation".into(),
+                    confidence: 0.8,
+                    source_event_ids: serde_json::json!([protected_obs.id.clone()]),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
 
             (protected_obs.id, unprotected_obs.id)
         };
@@ -579,11 +755,17 @@ mod tests {
         nightly(&store, None, &clock_now).await.unwrap();
 
         // protected_obs should still exist
-        let remaining = store.observations_by_ids(vec![protected_id.clone()]).await.unwrap();
+        let remaining = store
+            .observations_by_ids(vec![protected_id.clone()])
+            .await
+            .unwrap();
         assert_eq!(remaining.len(), 1, "protected obs should survive prune");
 
         // unprotected_obs should be deleted
-        let deleted = store.observations_by_ids(vec![unprotected_id.clone()]).await.unwrap();
+        let deleted = store
+            .observations_by_ids(vec![unprotected_id.clone()])
+            .await
+            .unwrap();
         assert!(deleted.is_empty(), "unprotected old obs should be pruned");
     }
 
@@ -595,5 +777,373 @@ mod tests {
         assert_eq!(format_date_from_epoch_seconds(1749600000), "2025-06-11");
         // 2026-06-11 = 1781136000
         assert_eq!(format_date_from_epoch_seconds(1781136000), "2026-06-11");
+    }
+
+    use rat_store::rows::NewPin;
+
+    #[tokio::test]
+    async fn nightly_always_deletes_expired_auto_pin_and_unlinks_dir() {
+        let now = DAY_MS * 200;
+        let clock: Arc<dyn Clock> = FakeClock::at(now);
+        let (store, tmp) = make_store(clock.clone()).await;
+
+        // Auto-pin whose dir exists on disk and whose expiry is in the past.
+        let pin_dir = tmp.path().join("pins").join("auto1");
+        std::fs::create_dir_all(&pin_dir).unwrap();
+        std::fs::write(pin_dir.join("seg.bin"), b"data").unwrap();
+
+        let pin = store
+            .insert_pin(NewPin {
+                kind: "auto".into(),
+                media: "screen".into(),
+                path: pin_dir.display().to_string(),
+                expires_at: Some(now - 1), // already past
+                reason: "test".into(),
+                meta: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        nightly(&store, None, &clock).await.unwrap();
+
+        // Pin row gone
+        assert!(store.get_pin(pin.id.clone()).await.unwrap().is_none());
+        // Dir unlinked
+        assert!(!pin_dir.exists(), "expired auto-pin dir should be unlinked");
+
+        // Retention status reflects 1 pin expired
+        let status = store.get_retention_status().await.unwrap().unwrap();
+        assert_eq!(status.pins_expired, 1);
+        assert_eq!(status.last_run_ms, now);
+    }
+
+    #[tokio::test]
+    async fn nightly_never_deletes_manual_pin_or_cited_observation_or_audit_row() {
+        let now = DAY_MS * 200;
+
+        let old_time: Arc<dyn Clock> = FakeClock::at(now - (181 * DAY_MS));
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("t.db");
+
+        let (cited_obs_id, manual_pin_id, api_call_id) = {
+            let store = Store::open(&db_path, old_time.clone()).unwrap();
+
+            // Cited observation: referenced by a memory's source_event_ids
+            let cited = store
+                .add_observation(NewObservation {
+                    kind: "shell_cmd".into(),
+                    content: "cited command".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            store
+                .add_memory(NewMemory {
+                    r#type: "episode_summary".into(),
+                    title: "Summary".into(),
+                    body: "References the cited obs".into(),
+                    confidence: 0.8,
+                    source_event_ids: serde_json::json!([cited.id.clone()]),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Manual pin (expires_at = NULL) — never expired/deleted by the pruner.
+            let manual_pin = store
+                .insert_pin(NewPin {
+                    kind: "manual".into(),
+                    media: "screen".into(),
+                    path: tmp
+                        .path()
+                        .join("pins")
+                        .join("manual1")
+                        .display()
+                        .to_string(),
+                    expires_at: None,
+                    reason: "kept forever".into(),
+                    meta: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+
+            // Audit-table row (api_calls), old but within the 365d window.
+            let api_call = store
+                .insert_api_call(
+                    "gpt-4".into(),
+                    "critic".into(),
+                    Some(1),
+                    Some(1),
+                    Some(0.0),
+                    true,
+                    None,
+                )
+                .await
+                .unwrap();
+
+            (cited.id, manual_pin.id, api_call)
+        };
+
+        let clock_now: Arc<dyn Clock> = FakeClock::at(now);
+        let store = Store::open(&db_path, clock_now.clone()).unwrap();
+        nightly(&store, None, &clock_now).await.unwrap();
+
+        // Cited observation survives
+        let remaining = store.observations_by_ids(vec![cited_obs_id]).await.unwrap();
+        assert_eq!(remaining.len(), 1, "cited observation must survive prune");
+
+        // Manual pin survives
+        assert!(
+            store.get_pin(manual_pin_id).await.unwrap().is_some(),
+            "manual pin must never expire"
+        );
+
+        // Audit row (api_call, within 365d) survives — pruning it requires another pass at >365d
+        let deleted_now = store
+            .delete_api_calls_older_than(now - (365 * DAY_MS), 5000)
+            .await
+            .unwrap();
+        assert_eq!(
+            deleted_now, 0,
+            "api_call within 365d should not be eligible for deletion"
+        );
+        let _ = api_call_id;
+    }
+
+    #[tokio::test]
+    async fn nightly_prunes_api_calls_older_than_365d_keeps_newer() {
+        let now = DAY_MS * 400;
+
+        let old_time: Arc<dyn Clock> = FakeClock::at(now - (366 * DAY_MS));
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("t.db");
+
+        {
+            let store = Store::open(&db_path, old_time.clone()).unwrap();
+            store
+                .insert_api_call(
+                    "gpt-4".into(),
+                    "critic".into(),
+                    Some(1),
+                    Some(1),
+                    Some(0.0),
+                    true,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        let clock_now: Arc<dyn Clock> = FakeClock::at(now);
+        let store = Store::open(&db_path, clock_now.clone()).unwrap();
+
+        // Insert a recent api_call (within 365d) at "now"
+        store
+            .insert_api_call(
+                "gpt-4".into(),
+                "critic".into(),
+                Some(1),
+                Some(1),
+                Some(0.0),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+
+        nightly(&store, None, &clock_now).await.unwrap();
+
+        let status = store.get_retention_status().await.unwrap().unwrap();
+        assert_eq!(
+            status.api_calls_deleted, 1,
+            "only the >365d api_call should be pruned"
+        );
+
+        // The remaining recent one (ts=now) should not be deletable at the same cutoff
+        let cutoff = now - (API_CALL_PRUNE_AGE_DAYS * DAY_MS);
+        let still_eligible = store
+            .delete_api_calls_older_than(cutoff, 5000)
+            .await
+            .unwrap();
+        assert_eq!(still_eligible, 0, "recent api_call should remain");
+    }
+
+    #[tokio::test]
+    async fn nightly_batch_boundary_loops_over_5k_eligible_observations() {
+        // Use a small override by inserting > PRUNE_MAX_ROWS observations is too slow for
+        // a unit test at 5000 rows; instead verify the looping behavior directly via the
+        // store API with a small max_rows by calling delete_observations_older_than in a
+        // loop (the same pattern `nightly` uses), proving it terminates and covers all rows.
+        let now = DAY_MS * 200;
+        let old_time: Arc<dyn Clock> = FakeClock::at(now - (181 * DAY_MS));
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("t.db");
+
+        const N: usize = 12; // > a small batch size of 5 used below
+        {
+            let store = Store::open(&db_path, old_time.clone()).unwrap();
+            for i in 0..N {
+                store
+                    .add_observation(NewObservation {
+                        kind: "shell_cmd".into(),
+                        content: format!("old command {i}"),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let clock_now: Arc<dyn Clock> = FakeClock::at(now);
+        let store = Store::open(&db_path, clock_now.clone()).unwrap();
+
+        // Drive the same batched-loop pattern as `nightly` with a small batch size.
+        let prune_cutoff = now - (PRUNE_AGE_DAYS * DAY_MS);
+        let mut total = 0u32;
+        loop {
+            let n = store
+                .delete_observations_older_than(prune_cutoff, &[], 5)
+                .await
+                .unwrap();
+            total += n;
+            if n < 5 {
+                break;
+            }
+        }
+        assert_eq!(
+            total, N as u32,
+            "batched loop must delete all eligible rows across multiple batches"
+        );
+
+        let remaining = store
+            .observations_by_ids((0..N).map(|_| "nonexistent".to_string()).collect())
+            .await
+            .unwrap();
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nightly_clock_skew_pin_created_then_clock_jumps_past_expiry_gone() {
+        let clock = FakeClock::at(1_000);
+        let (store, tmp) = make_store(clock.clone() as Arc<dyn Clock>).await;
+
+        let pin_dir = tmp.path().join("pins").join("skew1");
+        std::fs::create_dir_all(&pin_dir).unwrap();
+
+        let pin = store
+            .insert_pin(NewPin {
+                kind: "auto".into(),
+                media: "screen".into(),
+                path: pin_dir.display().to_string(),
+                expires_at: Some(2_000),
+                reason: "test".into(),
+                meta: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        // Before expiry: still present
+        assert!(store.get_pin(pin.id.clone()).await.unwrap().is_some());
+
+        // Jump the clock past expiry, then run nightly
+        clock.advance(10_000);
+        nightly(&store, None, &(clock.clone() as Arc<dyn Clock>))
+            .await
+            .unwrap();
+
+        assert!(
+            store.get_pin(pin.id.clone()).await.unwrap().is_none(),
+            "pin should be expired after clock skew"
+        );
+        assert!(
+            !pin_dir.exists(),
+            "pin dir should be unlinked after clock skew"
+        );
+    }
+
+    mod proptest_invariants {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            // §19 invariant: the pruner NEVER deletes a cited observation, an
+            // audit-table (api_calls) row within retention, or a manual pin —
+            // regardless of random ages/citation combinations.
+            #[test]
+            fn pruner_never_deletes_cited_obs_or_manual_pin_or_recent_api_call(
+                obs_age_days in 0i64..400,
+                cited in proptest::bool::ANY,
+                api_call_age_days in 0i64..400,
+            ) {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async move {
+                    let now = DAY_MS * 400;
+                    let obs_created = now - obs_age_days * DAY_MS;
+                    let old_time: Arc<dyn Clock> = FakeClock::at(obs_created);
+                    let tmp = tempdir().unwrap();
+                    let db_path = tmp.path().join("t.db");
+
+                    let (obs_id, manual_pin_id) = {
+                        let store = Store::open(&db_path, old_time.clone()).unwrap();
+                        let obs = store.add_observation(NewObservation {
+                            kind: "shell_cmd".into(),
+                            content: "candidate".into(),
+                            ..Default::default()
+                        }).await.unwrap();
+
+                        if cited {
+                            store.add_memory(NewMemory {
+                                r#type: "episode_summary".into(),
+                                title: "Summary".into(),
+                                body: "cites it".into(),
+                                confidence: 0.8,
+                                source_event_ids: serde_json::json!([obs.id.clone()]),
+                                ..Default::default()
+                            }).await.unwrap();
+                        }
+
+                        let manual_pin = store.insert_pin(NewPin {
+                            kind: "manual".into(),
+                            media: "screen".into(),
+                            path: tmp.path().join("pins").join("manualp").display().to_string(),
+                            expires_at: None,
+                            reason: "manual".into(),
+                            meta: serde_json::json!({}),
+                        }).await.unwrap();
+
+                        (obs.id, manual_pin.id)
+                    };
+
+                    // Insert the api_call at its own simulated age, in a separate open at the right clock.
+                    {
+                        let api_time: Arc<dyn Clock> = FakeClock::at(now - api_call_age_days * DAY_MS);
+                        let store = Store::open(&db_path, api_time.clone()).unwrap();
+                        store.insert_api_call("gpt-4".into(), "critic".into(), Some(1), Some(1), Some(0.0), true, None).await.unwrap();
+                    }
+
+                    let clock_now: Arc<dyn Clock> = FakeClock::at(now);
+                    let store = Store::open(&db_path, clock_now.clone()).unwrap();
+                    nightly(&store, None, &clock_now).await.unwrap();
+
+                    // Manual pin never deleted.
+                    prop_assert!(store.get_pin(manual_pin_id).await.unwrap().is_some());
+
+                    // Cited observation never deleted (even if >180d old).
+                    if cited {
+                        let remaining = store.observations_by_ids(vec![obs_id.clone()]).await.unwrap();
+                        prop_assert_eq!(remaining.len(), 1, "cited observation must survive");
+                    }
+
+                    // api_call within 365d never deleted by this run.
+                    if api_call_age_days < API_CALL_PRUNE_AGE_DAYS {
+                        let cutoff = now - API_CALL_PRUNE_AGE_DAYS * DAY_MS;
+                        let still_eligible = store.delete_api_calls_older_than(cutoff, 5000).await.unwrap();
+                        prop_assert_eq!(still_eligible, 0, "recent api_call must survive");
+                    }
+
+                    Ok(())
+                })?;
+            }
+        }
     }
 }

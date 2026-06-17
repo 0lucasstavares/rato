@@ -5,6 +5,19 @@ export async function rpc<T>(method: string, params: unknown = null): Promise<T>
   return await invoke<T>("rpc_call", { method, params });
 }
 
+/** Best-effort RPC for additive daemon methods where older daemons may not support the method. */
+export async function optionalRpc<T>(
+  method: string,
+  params: unknown = null,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await rpc<T>(method, params);
+  } catch {
+    return fallback;
+  }
+}
+
 /** True when the daemon answered the last health probe. */
 export async function daemonOk(): Promise<boolean> {
   try {

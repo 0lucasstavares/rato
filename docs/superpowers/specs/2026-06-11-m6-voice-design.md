@@ -28,11 +28,11 @@ a code audit + an fs-watch test, not by trusting runtime behavior.
 | Voice-approval gate | voice may decide an approval ONLY if (a) a pending approval popup is currently visible, (b) its risk ≤ R2, (c) the utterance contains the approval's **two-word slug** rendered on the card. R3 never voice-approvable. Record `decided_via='voice'` + utterance id. Reuse the M4 `approvals.decide` path with a voice source + slug check. | §15 verbatim; this is the security-critical bit and must be exact. |
 | Two-word slug | extend approvals: alongside the existing last-6-char typed slug (R3), generate a **two-word** spoken slug (adjective-animal from a fixed wordlist, derived deterministically from the approval id) rendered on every card; voice gate matches against it. Store/derive, don't add schema if derivable. | §15 needs a speakable slug distinct from the typed one. |
 | Language policy | `voice_utterances.lang` from STT detection; typed chat via `lingua-rs` (en/pt). Most recent utterance/message sets `last_language`; popups/TTS render that side; `message_en`+`message_pt` always both generated (already true since M3). | §15 verbatim. |
-| `voice_utterances` table | store migration **v6**: `voice_utterances(id PK, ts, lang, text, intent NULL, wake_word, handled INT)` per §10. Repo insert + recent. | §10 schema row, not yet created. |
+| `voice_utterances` table | store migration **v7** in the implemented schema: `voice_utterances(id PK, ts, lang, text, intent NULL, wake_word, handled INT)` per §10. Repo insert + recent. | v6 was consumed by M5 `retention_status`; voice landed as the next additive migration. |
 
 ## Components
 
-1. **store migration v6**: `voice_utterances` table + repo.
+1. **store migration v7**: `voice_utterances` table + repo.
 2. **`rat-voice` crate**: traits `AudioSource`/`WakeDetector`/`Vad`/`SttEngine`/`TtsEngine` + Fake impls;
    RAM pre-wake ring (mlock/zeroize, no-disk invariant); `IntentRouter` (pure logic, both grammars);
    two-word slug derivation. All unit-tested with fakes.
@@ -41,6 +41,9 @@ a code audit + an fs-watch test, not by trusting runtime behavior.
 4. **daemon wiring**: voice loop (only when mic enabled + features present): pre-wake ring → wake → VAD
    endpoint → STT → record `voice_utterances` → IntentRouter → execute local intent OR fallback chat;
    TTS reply via DialogueBox. Voice-approval gate integrated with `approvals.decide` (source=voice).
+   Implemented deterministic local actions currently cover voice approvals and `pin that`/`pina isso`
+   over the screen ring; the remaining local intents are routed/recorded and can be attached to
+   daemon actions as those control surfaces land.
 5. **CLI**: `rat voice status` (backend availability), `rat voice say "<text>"` (TTS smoke when `tts`),
    `rat utterances` (recent). RPC additive: `voice.status`, `voice.utterances`.
 6. **Shell**: avatar ear-perk + MIC chip pulse on wake; DialogueBox renders STT/replies in `last_language`;

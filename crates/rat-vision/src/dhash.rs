@@ -67,9 +67,7 @@ mod tests {
     #[test]
     fn tiny_perturbation_is_small_distance() {
         // Base: left half dark, right half bright (many left < right transitions)
-        let base = GrayImage::from_fn(64, 64, |x, _| {
-            Luma([if x < 32 { 50 } else { 200 }])
-        });
+        let base = GrayImage::from_fn(64, 64, |x, _| Luma([if x < 32 { 50 } else { 200 }]));
         // Near-dup: change a single pixel in a corner — dHash is coarse enough
         // that this won't move the hash, but at minimum it should be ≤4.
         let mut near_dup = base.clone();
@@ -90,9 +88,8 @@ mod tests {
         // for solid images (no left<right difference), BUT a solid-black vs
         // gradient image will differ significantly.
         let black = solid_gray(64, 64, 0);
-        let bright_gradient = GrayImage::from_fn(64, 64, |x, _y| {
-            Luma([((x + 1) * 8).min(255) as u8])
-        });
+        let bright_gradient =
+            GrayImage::from_fn(64, 64, |x, _y| Luma([((x + 1) * 8).min(255) as u8]));
 
         let h1 = dhash(&black);
         let h2 = dhash(&bright_gradient);
@@ -116,6 +113,9 @@ mod tests {
         // Both are all-same (either all 0-bits or all 1-bits).
         // Hamming should be either 0 or 64.
         let d = hamming(hw, hb);
-        assert!(d == 0 || d == 64, "solid images produce degenerate hashes (got {d})");
+        assert!(
+            d == 0 || d == 64,
+            "solid images produce degenerate hashes (got {d})"
+        );
     }
 }

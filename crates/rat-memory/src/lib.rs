@@ -1,10 +1,10 @@
 pub mod embed;
-pub mod retrieve;
 pub mod jobs;
+pub mod retrieve;
 
 pub use embed::EmbeddingClient;
-pub use retrieve::{Hit, HitKind, rrf_fuse, recency_boost, search};
 pub use jobs::{hourly, nightly};
+pub use retrieve::{recency_boost, rrf_fuse, search, Hit, HitKind};
 
 use thiserror::Error;
 

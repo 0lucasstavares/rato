@@ -119,6 +119,7 @@
             </div>
 
             <div class="card-reason">{a.reason}</div>
+            <div class="voice-slug mono">voice slug: {a.spoken_slug}</div>
 
             {#if diffstatText(a)}
               <pre class="diffstat-block">{diffstatText(a)}</pre>
@@ -283,6 +284,14 @@
     font-size: 13px;
     color: var(--hud-ink);
     line-height: 1.4;
+  }
+
+  .voice-slug {
+    display: inline-block;
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--hud-ink) 35%, transparent);
+    background: color-mix(in srgb, var(--hud-info) 8%, transparent);
+    color: var(--hud-ink-dim);
   }
 
   .diffstat-block {

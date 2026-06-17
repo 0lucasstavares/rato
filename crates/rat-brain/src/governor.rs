@@ -142,16 +142,19 @@ mod tests {
         // 9th at t=3_100_001: one_hour_ago = 3_100_001 - 3_600_000 = -499_999
         //   retain ts > -499_999: all 8 entries kept → global=8 → deny ✓
         let mut gov = Governor::new();
-        assert!(gov.admit("chaos", 0));             // global=1
-        assert!(gov.admit("chaos", 1));             // global=2, chaos tok=0
-        assert!(gov.admit("chaos", 600_001));       // refill 1, global=3
-        assert!(gov.admit("chaos", 1_200_001));     // refill 1, global=4
-        assert!(gov.admit("chaos", 1_800_001));     // refill 1, global=5
-        assert!(gov.admit("chaos", 2_400_001));     // refill 1, global=6
-        assert!(gov.admit("chaos", 3_000_001));     // refill 1, global=7
-        assert!(gov.admit("mentor", 3_100_000));    // mentor fresh, tok=1, global=8
-        // 9th: all 8 entries are within 1 hour of t=3_100_001 → deny
-        assert!(!gov.admit("mentor", 3_100_001), "9th admit should be denied by global cap");
+        assert!(gov.admit("chaos", 0)); // global=1
+        assert!(gov.admit("chaos", 1)); // global=2, chaos tok=0
+        assert!(gov.admit("chaos", 600_001)); // refill 1, global=3
+        assert!(gov.admit("chaos", 1_200_001)); // refill 1, global=4
+        assert!(gov.admit("chaos", 1_800_001)); // refill 1, global=5
+        assert!(gov.admit("chaos", 2_400_001)); // refill 1, global=6
+        assert!(gov.admit("chaos", 3_000_001)); // refill 1, global=7
+        assert!(gov.admit("mentor", 3_100_000)); // mentor fresh, tok=1, global=8
+                                                 // 9th: all 8 entries are within 1 hour of t=3_100_001 → deny
+        assert!(
+            !gov.admit("mentor", 3_100_001),
+            "9th admit should be denied by global cap"
+        );
     }
 
     #[test]

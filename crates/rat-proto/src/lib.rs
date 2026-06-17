@@ -14,6 +14,8 @@ pub mod methods {
     pub const SESSIONS_RECENT: &str = "sessions.recent";
     pub const MODE_GET: &str = "mode.get";
     pub const MEMORY_SEARCH: &str = "memory.search";
+    pub const MEMORY_LIST: &str = "memory.list";
+    pub const DISCLOSURES_RECENT: &str = "disclosures.recent";
     pub const PUSHBACKS_RECENT: &str = "pushbacks.recent";
     pub const PUSHBACKS_FEEDBACK: &str = "pushbacks.feedback";
     pub const LLM_STATUS: &str = "llm.status";
@@ -26,6 +28,15 @@ pub mod methods {
     pub const PINS_PIN_RECENT: &str = "pins.pin_recent";
     pub const PINS_LIST: &str = "pins.list";
     pub const PINS_UNPIN: &str = "pins.unpin";
+    pub const RING_STATUS: &str = "ring.status";
+    pub const RETENTION_STATUS: &str = "retention.status";
+    pub const VOICE_STATUS: &str = "voice.status";
+    pub const VOICE_UTTERANCES: &str = "voice.utterances";
+    pub const TERMINALS_LIST: &str = "terminals.list";
+    pub const TERMINALS_SET_ROLE: &str = "terminals.set_role";
+    pub const DOTFILE_EDITS_LIST: &str = "dotfile_edits.list";
+    pub const DOTFILE_EDITS_APPLY: &str = "dotfile_edits.apply";
+    pub const DOTFILE_EDITS_REVERT: &str = "dotfile_edits.revert";
 }
 
 pub mod errcodes {
@@ -61,11 +72,22 @@ pub struct Response {
 
 impl Response {
     pub fn ok(id: u64, result: Value) -> Self {
-        Self { id, result: Some(result), error: None }
+        Self {
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(id: u64, code: i64, message: impl Into<String>) -> Self {
-        Self { id, result: None, error: Some(RpcError { code, message: message.into() }) }
+        Self {
+            id,
+            result: None,
+            error: Some(RpcError {
+                code,
+                message: message.into(),
+            }),
+        }
     }
 }
 
@@ -114,6 +136,54 @@ pub struct StatusResult {
     pub uptime_ms: i64,
     pub event_count: u64,
     pub db_path: String,
+    /// M5: SensorGate health for `screen`/`ocr` (additive; empty in older
+    /// daemons that haven't wired the capture loop).
+    #[serde(default)]
+    pub sensors: Vec<SensorHealthDto>,
+}
+
+/// Wire DTO for SensorGate entries (M5 §5). `state` is `"ok"` or
+/// `"unavailable"`; `reason` is populated only for `"unavailable"`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SensorHealthDto {
+    pub name: String,
+    pub state: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Wire DTO mirroring `rat_store::rows::RetentionStatus`. `None` from the
+/// `retention.status` RPC means the nightly pruner hasn't run yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RetentionStatusDto {
+    pub last_run_ms: i64,
+    pub observations_deleted: u32,
+    pub pins_expired: u32,
+    pub api_calls_deleted: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RingMediaStatusDto {
+    pub media: String,
+    pub segment_count: u32,
+    pub newest_ms: Option<i64>,
+    pub oldest_ms: Option<i64>,
+    pub ttl_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceBackendStatusDto {
+    pub name: String,
+    pub state: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceStatusDto {
+    pub enabled: bool,
+    pub backends: Vec<VoiceBackendStatusDto>,
+    pub prewake_ring_secs: u32,
 }
 
 fn default_limit() -> u32 {
@@ -128,7 +198,9 @@ pub struct RecentParams {
 
 impl Default for RecentParams {
     fn default() -> Self {
-        Self { limit: default_limit() }
+        Self {
+            limit: default_limit(),
+        }
     }
 }
 
@@ -193,7 +265,10 @@ pub struct ObsRecentParams {
 
 impl Default for ObsRecentParams {
     fn default() -> Self {
-        Self { limit: default_limit(), kind: None }
+        Self {
+            limit: default_limit(),
+            kind: None,
+        }
     }
 }
 
@@ -204,6 +279,43 @@ pub struct MemorySearchParams {
     pub project_id: Option<String>,
     #[serde(default)]
     pub n: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryListParams {
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryDto {
+    pub id: String,
+    pub r#type: String,
+    pub project_id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub confidence: f64,
+    pub created: i64,
+    pub updated: i64,
+    pub source_event_ids: serde_json::Value,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DisclosureDto {
+    pub id: String,
+    pub ts: i64,
+    pub api_call_id: Option<String>,
+    pub model: String,
+    pub purpose: String,
+    pub memory_ids: serde_json::Value,
+    pub observation_ids: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -270,10 +382,18 @@ pub struct WorkbenchStartParams {
     pub title: String,
     #[serde(default = "default_adapter")]
     pub adapter: String,
+    #[serde(default = "default_executor")]
+    pub executor: String,
+    #[serde(default)]
+    pub docker_image: Option<String>,
 }
 
 fn default_adapter() -> String {
     "fakeagent".to_string()
+}
+
+fn default_executor() -> String {
+    "local".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -334,6 +454,86 @@ pub struct ApprovalDto {
     pub decided_via: Option<String>,
     pub decision_note: Option<String>,
     pub execution: Option<serde_json::Value>,
+    #[serde(default)]
+    pub spoken_slug: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceUtteranceDto {
+    pub id: String,
+    pub ts: i64,
+    pub lang: String,
+    pub text: String,
+    pub intent: Option<String>,
+    pub wake_word: String,
+    pub handled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalDto {
+    pub id: String,
+    pub tty: String,
+    pub pid: i64,
+    pub emulator: String,
+    pub tmux_target: Option<String>,
+    pub role: String,
+    pub project_id: Option<String>,
+    pub cmd_hash: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub meta: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalsSetRoleParams {
+    pub id: String,
+    /// "operator" | "workbench" | "foreign" | "ignored"
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DotfileEditDto {
+    pub id: String,
+    pub path: String,
+    pub kind: String,
+    pub before_blob: String,
+    pub after_blob: String,
+    pub diff: String,
+    pub reason: String,
+    pub source: String,
+    pub risk: i64,
+    pub created: i64,
+    pub applied: bool,
+    pub reverted_by: Option<String>,
+    pub meta: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DotfileEditsApplyParams {
+    pub path: String,
+    /// "json" | "jsonc" | "toml" | "yaml" | "text"
+    pub kind: String,
+    pub contents: String,
+    pub reason: String,
+    #[serde(default = "default_dotfile_source")]
+    pub source: String,
+    #[serde(default = "default_dotfile_risk")]
+    pub risk: i64,
+    #[serde(default)]
+    pub meta: serde_json::Value,
+}
+
+fn default_dotfile_source() -> String {
+    "rat-dotfile".to_string()
+}
+
+fn default_dotfile_risk() -> i64 {
+    3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DotfileEditsRevertParams {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -411,9 +611,12 @@ mod tests {
 
     #[test]
     fn response_err_omits_result_field() {
-        let s =
-            serde_json::to_string(&Response::err(7, errcodes::HELLO_REQUIRED, "hello required"))
-                .unwrap();
+        let s = serde_json::to_string(&Response::err(
+            7,
+            errcodes::HELLO_REQUIRED,
+            "hello required",
+        ))
+        .unwrap();
         assert!(!s.contains("result"));
         assert!(s.contains("-32001"));
     }
@@ -429,5 +632,14 @@ mod tests {
     fn recent_params_default_limit_is_50() {
         let p: RecentParams = serde_json::from_str("{}").unwrap();
         assert_eq!(p.limit, 50);
+    }
+
+    #[test]
+    fn workbench_start_defaults_to_local_fakeagent() {
+        let p: WorkbenchStartParams =
+            serde_json::from_str(r#"{"project_id":"p1","title":"fix bug"}"#).unwrap();
+        assert_eq!(p.adapter, "fakeagent");
+        assert_eq!(p.executor, "local");
+        assert_eq!(p.docker_image, None);
     }
 }

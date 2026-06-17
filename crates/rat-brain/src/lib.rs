@@ -1,16 +1,16 @@
 pub mod backend;
-pub mod error;
-pub mod keys;
-pub mod detect;
-pub mod governor;
 pub mod critic;
+pub mod detect;
+pub mod error;
+pub mod governor;
+pub mod keys;
 
-mod openai;
 mod anthropic;
 mod compat;
+mod openai;
 
 pub use backend::{
-    BackendConfig, ChatBackend, ChatMessage, ChatRequest, ChatResponse, Provider, Role, Route,
-    make_backend,
+    make_backend, BackendConfig, ChatBackend, ChatMessage, ChatRequest, ChatResponse, Provider,
+    Role, Route,
 };
 pub use error::LlmError;

@@ -6,6 +6,50 @@ export interface StatusResult {
   uptime_ms: number;
   event_count: number;
   db_path: string;
+  sensors: SensorHealthDto[];
+}
+
+export interface SensorHealthDto {
+  name: string;
+  state: "ok" | "unavailable" | string;
+  reason?: string | null;
+}
+
+export interface RetentionStatusDto {
+  last_run_ms: number;
+  observations_deleted: number;
+  pins_expired: number;
+  api_calls_deleted: number;
+}
+
+export interface RingMediaStatusDto {
+  media: string;
+  segment_count: number;
+  newest_ms: number | null;
+  oldest_ms: number | null;
+  ttl_secs: number;
+}
+
+export interface VoiceBackendStatusDto {
+  name: string;
+  state: "ok" | "unavailable" | string;
+  reason?: string | null;
+}
+
+export interface VoiceStatusDto {
+  enabled: boolean;
+  backends: VoiceBackendStatusDto[];
+  prewake_ring_secs: number;
+}
+
+export interface VoiceUtteranceDto {
+  id: string;
+  ts: number;
+  lang: string;
+  text: string;
+  intent: string | null;
+  wake_word: string;
+  handled: boolean;
 }
 
 export interface RatEvent {
@@ -44,6 +88,35 @@ export interface Observation {
   project_id: string | null;
   content: string;
   meta: Record<string, unknown>;
+}
+
+export interface MemoryDto {
+  id: string;
+  type: string;
+  project_id: string | null;
+  title: string;
+  body: string;
+  confidence: number;
+  created: number;
+  updated: number;
+  source_event_ids: unknown;
+  archived: boolean;
+}
+
+export interface DisclosureDto {
+  id: string;
+  ts: number;
+  api_call_id: string | null;
+  model: string;
+  purpose: string;
+  memory_ids: unknown;
+  observation_ids: unknown;
+}
+
+export interface HitDto {
+  id: string;
+  kind: "observation" | "memory" | string;
+  score: number;
 }
 
 export interface ModeState {
@@ -92,6 +165,7 @@ export interface ApprovalDto {
   decided_via: string | null;
   decision_note: string | null;
   execution: unknown | null;
+  spoken_slug: string;
 }
 
 /** Wire DTO mirroring rat-proto PushbackDto / rat_store::rows::Pushback */
@@ -124,5 +198,35 @@ export interface PinDto {
   created: number;
   expires_at: number | null;
   reason: string;
+  meta: Record<string, unknown>;
+}
+
+export interface TerminalDto {
+  id: string;
+  tty: string;
+  pid: number;
+  emulator: string;
+  tmux_target: string | null;
+  role: "operator" | "workbench" | "foreign" | "ignored" | string;
+  project_id: string | null;
+  cmd_hash: string;
+  first_seen: number;
+  last_seen: number;
+  meta: Record<string, unknown>;
+}
+
+export interface DotfileEditDto {
+  id: string;
+  path: string;
+  kind: "json" | "jsonc" | "toml" | "yaml" | "text" | string;
+  before_blob: string;
+  after_blob: string;
+  diff: string;
+  reason: string;
+  source: string;
+  risk: number;
+  created: number;
+  applied: boolean;
+  reverted_by: string | null;
   meta: Record<string, unknown>;
 }

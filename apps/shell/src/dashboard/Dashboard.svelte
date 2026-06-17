@@ -7,6 +7,9 @@
   import Workbench from "./tabs/Workbench.svelte";
   import Approvals from "./tabs/Approvals.svelte";
   import Pins from "./tabs/Pins.svelte";
+  import Calendar from "./tabs/Calendar.svelte";
+  import Metrics from "./tabs/Metrics.svelte";
+  import Memory from "./tabs/Memory.svelte";
 
   let active = $state("Now");
 </script>
@@ -14,12 +17,18 @@
 <div class="dash hud-grunge">
   <header>
     <span class="logo">RATO</span>
-    <span class="sub">developer companion · M5 shell</span>
+    <span class="sub">developer companion · M7 shell</span>
   </header>
-  <TabBar tabs={["Now", "Pushback", "Workbench", "Approvals", "Pins", "Sensors", "Settings"]} bind:active />
+  <TabBar tabs={["Now", "Calendar", "Metrics", "Memory", "Pushback", "Workbench", "Approvals", "Pins", "Sensors", "Settings"]} bind:active />
   <main>
     {#if active === "Now"}
       <Now />
+    {:else if active === "Calendar"}
+      <Calendar />
+    {:else if active === "Metrics"}
+      <Metrics />
+    {:else if active === "Memory"}
+      <Memory />
     {:else if active === "Pushback"}
       <Pushback />
     {:else if active === "Workbench"}

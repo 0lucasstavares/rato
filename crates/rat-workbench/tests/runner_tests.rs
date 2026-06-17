@@ -8,8 +8,8 @@
 //! tempdir git repos to prevent cross-test contamination.
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use rat_core::clock::{Clock, FakeClock};
 use rat_store::store::Store;
@@ -70,7 +70,12 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .status()
         .expect("git failed");
-    assert!(status.success(), "git {:?} failed in {}", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} failed in {}",
+        args,
+        dir.display()
+    );
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> String {
@@ -162,7 +167,11 @@ async fn test_fakeagent_e2e_approve_and_merge() {
         .await
         .expect("get run")
         .expect("run should exist");
-    assert_eq!(finished.status, "done", "run should be done, got: {}", finished.status);
+    assert_eq!(
+        finished.status, "done",
+        "run should be done, got: {}",
+        finished.status
+    );
 
     // Capture HEAD before merge.
     let head_before = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -196,10 +205,7 @@ async fn test_fakeagent_e2e_approve_and_merge() {
         MergeOutcome::Merged { ref commit_sha } => {
             // HEAD must have moved.
             let head_after = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_string();
-            assert_ne!(
-                head_after, head_before,
-                "HEAD should move after merge"
-            );
+            assert_ne!(head_after, head_before, "HEAD should move after merge");
             assert!(!commit_sha.is_empty());
 
             // AGENT_NOTE.md must be present in the live repo.
@@ -275,7 +281,9 @@ async fn test_fakeagent_deny_leaves_live_repo_unchanged() {
 
     // Snapshot BEFORE the run.
     let head_before = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_string();
-    let status_before = git_output(&repo, &["status", "--porcelain"]).trim().to_string();
+    let status_before = git_output(&repo, &["status", "--porcelain"])
+        .trim()
+        .to_string();
 
     // Start a run.
     let run = runner
@@ -298,7 +306,9 @@ async fn test_fakeagent_deny_leaves_live_repo_unchanged() {
 
     // Snapshot AFTER deny.
     let head_after = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_string();
-    let status_after = git_output(&repo, &["status", "--porcelain"]).trim().to_string();
+    let status_after = git_output(&repo, &["status", "--porcelain"])
+        .trim()
+        .to_string();
 
     // INVARIANT: live repo must be byte-identical.
     assert_eq!(
@@ -398,7 +408,10 @@ async fn test_execute_merge_returns_needs_manual_on_conflict() {
     let tmux = Tmux::new(&socket);
     let runner = TaskRunner::new(store, tmux, clock);
 
-    let outcome = runner.execute_merge(&approved).await.expect("execute_merge");
+    let outcome = runner
+        .execute_merge(&approved)
+        .await
+        .expect("execute_merge");
     assert_eq!(
         outcome,
         MergeOutcome::NeedsManual,
@@ -453,8 +466,8 @@ async fn test_merge_back_large_diff_uses_blob() {
     // Instead, we create the worktree manually and write a big file.
     let task_id = format!("{:x}", clock.now_ms());
     let slug = "blob-test";
-    let wt = rat_workbench::worktree::create(&repo, &task_id, slug, "HEAD")
-        .expect("create worktree");
+    let wt =
+        rat_workbench::worktree::create(&repo, &task_id, slug, "HEAD").expect("create worktree");
 
     // Write big file directly.
     std::fs::write(wt.path.join("bigfile.txt"), &big_content).unwrap();
@@ -481,7 +494,13 @@ async fn test_merge_back_large_diff_uses_blob() {
         .expect("insert run");
 
     store
-        .update_agent_run_status(run.id.clone(), "done".into(), Some(clock.now_ms()), None, None)
+        .update_agent_run_status(
+            run.id.clone(),
+            "done".into(),
+            Some(clock.now_ms()),
+            None,
+            None,
+        )
         .await
         .expect("update status");
 

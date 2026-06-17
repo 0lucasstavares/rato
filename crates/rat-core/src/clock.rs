@@ -27,7 +27,9 @@ pub struct FakeClock {
 
 impl FakeClock {
     pub fn at(ms: i64) -> Arc<Self> {
-        Arc::new(Self { now: AtomicI64::new(ms) })
+        Arc::new(Self {
+            now: AtomicI64::new(ms),
+        })
     }
 
     pub fn advance(&self, ms: i64) {

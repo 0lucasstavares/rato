@@ -21,7 +21,8 @@
 <style>
   .tabbar {
     display: flex;
-    gap: 18px;
+    flex-wrap: wrap;
+    gap: 8px 16px;
     padding: 10px 16px 12px;
   }
   .tab {

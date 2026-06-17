@@ -50,6 +50,12 @@ pub struct TaskRunner {
     pub clock: Arc<dyn Clock>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionBackend {
+    Local,
+    Docker { image: String },
+}
+
 impl TaskRunner {
     pub fn new(store: Store, tmux: Tmux, clock: Arc<dyn Clock>) -> Self {
         Self { store, tmux, clock }
@@ -78,6 +84,26 @@ impl TaskRunner {
         adapter: &dyn AgentAdapter,
         base: &str,
     ) -> Result<AgentRun> {
+        self.start_with_backend(
+            project_root,
+            project_id,
+            title,
+            adapter,
+            base,
+            ExecutionBackend::Local,
+        )
+        .await
+    }
+
+    pub async fn start_with_backend(
+        &self,
+        project_root: &Path,
+        project_id: &str,
+        title: &str,
+        adapter: &dyn AgentAdapter,
+        base: &str,
+        backend: ExecutionBackend,
+    ) -> Result<AgentRun> {
         let now = self.clock.now_ms();
 
         // Derive a URL-safe slug from the title (lowercase, replace non-alnum with '-').
@@ -95,8 +121,14 @@ impl TaskRunner {
         self.tmux.ensure_session(session)?;
 
         // Use a unique window name derived from slug + task_id (first 8 hex chars).
-        let window_name = format!("{}-{}", &slug[..slug.len().min(12)], &task_id[..task_id.len().min(8)]);
-        let target = self.tmux.new_window(session, &window_name, &worktree.path)?;
+        let window_name = format!(
+            "{}-{}",
+            &slug[..slug.len().min(12)],
+            &task_id[..task_id.len().min(8)]
+        );
+        let target = self
+            .tmux
+            .new_window(session, &window_name, &worktree.path)?;
 
         // Register the run in the store with the tmux_target already set.
         let run = self
@@ -108,7 +140,7 @@ impl TaskRunner {
                 worktree_path: worktree.path.display().to_string(),
                 branch: worktree.branch.clone(),
                 tmux_target: Some(target.clone()),
-                mode: "headless".to_string(),
+                mode: backend.mode_label(),
                 tokens: json!({}),
                 cost_usd: 0.0,
                 started: now,
@@ -118,12 +150,7 @@ impl TaskRunner {
 
         // Build the wrapped command: cd into worktree, run agent cmd, then
         // echo the exit code so poll() can detect completion.
-        let adapter_cmd = adapter.headless_cmd(title, &worktree.path);
-        let wrapped = format!(
-            "cd {} && {}; echo RATO_EXIT=$?",
-            shell_escape_path(&worktree.path),
-            adapter_cmd
-        );
+        let wrapped = wrapped_run_command(title, adapter, &worktree.path, &backend);
         self.tmux.run_in_window(&target, &wrapped)?;
 
         Ok(run)
@@ -425,6 +452,49 @@ impl TaskRunner {
     }
 }
 
+impl ExecutionBackend {
+    fn mode_label(&self) -> String {
+        match self {
+            ExecutionBackend::Local => "headless".to_string(),
+            ExecutionBackend::Docker { image } => format!("docker:{image}"),
+        }
+    }
+}
+
+pub fn docker_run_command(image: &str, worktree_path: &Path, inner_cmd: &str) -> String {
+    format!(
+        "docker run --rm -i -v {}:/workspace -w /workspace {} sh -lc {}",
+        shell_escape_path(worktree_path),
+        shell_quote(image),
+        shell_quote(inner_cmd),
+    )
+}
+
+fn wrapped_run_command(
+    title: &str,
+    adapter: &dyn AgentAdapter,
+    worktree_path: &Path,
+    backend: &ExecutionBackend,
+) -> String {
+    match backend {
+        ExecutionBackend::Local => {
+            let adapter_cmd = adapter.headless_cmd(title, worktree_path);
+            format!(
+                "cd {} && {}; echo RATO_EXIT=$?",
+                shell_escape_path(worktree_path),
+                adapter_cmd
+            )
+        }
+        ExecutionBackend::Docker { image } => {
+            let inner_cmd = adapter.container_cmd(title);
+            format!(
+                "{}; echo RATO_EXIT=$?",
+                docker_run_command(image, worktree_path, &inner_cmd)
+            )
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -445,12 +515,21 @@ fn title_to_slug(title: &str) -> String {
     }
     // Trim trailing dash
     let slug = slug.trim_end_matches('-').to_string();
-    if slug.is_empty() { "task".to_string() } else { slug }
+    if slug.is_empty() {
+        "task".to_string()
+    } else {
+        slug
+    }
 }
 
 /// Produce a single-quoted shell argument for a path, escaping single-quotes.
 fn shell_escape_path(path: &Path) -> String {
     let s = path.display().to_string();
+    let escaped = s.replace('\'', r"'\''");
+    format!("'{}'", escaped)
+}
+
+fn shell_quote(s: &str) -> String {
     let escaped = s.replace('\'', r"'\''");
     format!("'{}'", escaped)
 }
@@ -597,5 +676,50 @@ mod tests {
     fn shell_escape_path_with_space() {
         let p = Path::new("/home/user/my repo");
         assert_eq!(shell_escape_path(p), "'/home/user/my repo'");
+    }
+
+    #[test]
+    fn docker_run_command_mounts_worktree_and_quotes_args() {
+        let cmd = docker_run_command(
+            "codex:test",
+            Path::new("/home/user/my repo"),
+            "codex exec 'fix bug'",
+        );
+        assert_eq!(
+            cmd,
+            "docker run --rm -i -v '/home/user/my repo':/workspace -w /workspace 'codex:test' sh -lc 'codex exec '\\''fix bug'\\'''"
+        );
+    }
+
+    #[test]
+    fn wrapped_local_command_preserves_existing_cwd_behavior() {
+        let adapter = crate::adapter::FakeAgent::new(Path::new("/tmp/rat-workbench-fixtures"));
+        let cmd = wrapped_run_command(
+            "fix bug",
+            &adapter,
+            Path::new("/home/user/repo"),
+            &ExecutionBackend::Local,
+        );
+        assert_eq!(
+            cmd,
+            "cd '/home/user/repo' && bash /tmp/rat-workbench-fixtures/tests/fixtures/fakeagent.sh; echo RATO_EXIT=$?"
+        );
+    }
+
+    #[test]
+    fn wrapped_docker_command_uses_container_adapter_command() {
+        let adapter = crate::adapter::FakeAgent::new(Path::new("/tmp/rat-workbench-fixtures"));
+        let cmd = wrapped_run_command(
+            "fix bug",
+            &adapter,
+            Path::new("/home/user/repo"),
+            &ExecutionBackend::Docker {
+                image: "agent:latest".to_string(),
+            },
+        );
+        assert_eq!(
+            cmd,
+            "docker run --rm -i -v '/home/user/repo':/workspace -w /workspace 'agent:latest' sh -lc 'echo fakeagent fixture is host-only; use a docker image with the desired agent installed; exit 2'; echo RATO_EXIT=$?"
+        );
     }
 }

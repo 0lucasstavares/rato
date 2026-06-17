@@ -191,6 +191,58 @@ const MIGRATIONS: &[&str] = &[
         meta       TEXT NOT NULL DEFAULT '{}'
     );
     CREATE INDEX idx_pins_expires ON pins(expires_at);",
+    // v6: retention_status (M5 Eyes — last nightly prune time + counts, single row)
+    "CREATE TABLE retention_status (
+        id                   TEXT PRIMARY KEY,
+        last_run_ms          INTEGER NOT NULL,
+        observations_deleted INTEGER NOT NULL DEFAULT 0,
+        pins_expired         INTEGER NOT NULL DEFAULT 0,
+        api_calls_deleted    INTEGER NOT NULL DEFAULT 0
+    );",
+    // v7: voice utterances (M6 Voice — post-wake transcripts only)
+    "CREATE TABLE voice_utterances (
+        id        TEXT PRIMARY KEY,
+        ts        INTEGER NOT NULL,
+        lang      TEXT NOT NULL,
+        text      TEXT NOT NULL,
+        intent    TEXT,
+        wake_word TEXT NOT NULL,
+        handled   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_voice_utterances_ts ON voice_utterances(ts);",
+    // v8: terminals + dotfile edit audit trail (M7 Polish)
+    "CREATE TABLE terminals (
+        id           TEXT PRIMARY KEY,
+        tty          TEXT NOT NULL,
+        pid          INTEGER NOT NULL,
+        emulator     TEXT NOT NULL,
+        tmux_target  TEXT,
+        role         TEXT NOT NULL,
+        project_id   TEXT,
+        cmd_hash     TEXT NOT NULL,
+        first_seen   INTEGER NOT NULL,
+        last_seen    INTEGER NOT NULL,
+        meta         TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(tty, cmd_hash)
+    );
+    CREATE INDEX idx_terminals_tty ON terminals(tty);
+    CREATE INDEX idx_terminals_role_last_seen ON terminals(role, last_seen);
+    CREATE TABLE dotfile_edits (
+        id          TEXT PRIMARY KEY,
+        path        TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        before_blob TEXT NOT NULL,
+        after_blob  TEXT NOT NULL,
+        diff        TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        risk        INTEGER NOT NULL,
+        created     INTEGER NOT NULL,
+        applied     INTEGER NOT NULL DEFAULT 1,
+        reverted_by TEXT,
+        meta        TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX idx_dotfile_edits_created ON dotfile_edits(created);",
 ];
 
 pub fn open_db(path: &Path) -> Result<Connection, StoreError> {
@@ -229,13 +281,20 @@ mod tests {
     fn open_creates_schema_at_latest_version() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = open_db(&tmp.path().join("t.db")).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
-        conn.prepare("SELECT id, ts, kind, source, project_id, session_id, payload, lang FROM events")
+        conn.prepare(
+            "SELECT id, ts, kind, source, project_id, session_id, payload, lang FROM events",
+        )
+        .unwrap();
+        conn.prepare("SELECT id, root_path, name, first_seen, last_seen FROM projects")
             .unwrap();
-        conn.prepare("SELECT id, root_path, name, first_seen, last_seen FROM projects").unwrap();
-        conn.prepare("SELECT id, project_id, started, last_activity, ended, commands FROM work_sessions")
-            .unwrap();
+        conn.prepare(
+            "SELECT id, project_id, started, last_activity, ended, commands FROM work_sessions",
+        )
+        .unwrap();
         conn.prepare("SELECT id, event_id, ts, kind, project_id, content, meta FROM observations")
             .unwrap();
     }
@@ -246,7 +305,9 @@ mod tests {
         let path = tmp.path().join("t.db");
         drop(open_db(&path).unwrap());
         let conn = open_db(&path).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
     }
 
@@ -266,9 +327,13 @@ mod tests {
             .unwrap();
         }
         let conn = open_db(&path).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 1);
     }
 
@@ -290,7 +355,9 @@ mod tests {
             .unwrap();
         }
         let conn = open_db(&path).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
         // FTS backfill: should find the observation via FTS match
         let count: i64 = conn
@@ -329,7 +396,8 @@ mod tests {
         assert_eq!(before, 1, "FTS index should contain the row after insert");
 
         // Delete the observation row — the AFTER DELETE trigger should clean up the FTS index.
-        conn.execute("DELETE FROM observations WHERE id = 'obs_del_test'", []).unwrap();
+        conn.execute("DELETE FROM observations WHERE id = 'obs_del_test'", [])
+            .unwrap();
 
         // Confirm FTS match is gone.
         let after: i64 = conn
@@ -339,7 +407,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(after, 0, "FTS index should be empty after deleting the observation");
+        assert_eq!(
+            after, 0,
+            "FTS index should be empty after deleting the observation"
+        );
     }
 
     #[test]
@@ -368,18 +439,25 @@ mod tests {
         }
         // open_db should run v4 (and v5) migrations and reach the latest version
         let conn = open_db(&path).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
         // v3 data is still there
-        let mem_count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0)).unwrap();
+        let mem_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(mem_count, 1, "existing memory row must survive migration");
-        let pb_count: i64 = conn.query_row("SELECT COUNT(*) FROM pushbacks", [], |r| r.get(0)).unwrap();
+        let pb_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pushbacks", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(pb_count, 1, "existing pushback row must survive migration");
         // v4 tables exist
         conn.prepare("SELECT id, created, kind, risk, title, reason, cwd, target, agent_identity, payload, expected_impact, expires_at, status, decided_at, decided_via, decision_note, execution FROM approvals").unwrap();
         conn.prepare("SELECT id, approval_id, kind, payload, started, ended, exit_code, output_blob FROM actions").unwrap();
         conn.prepare("SELECT id, adapter, task_title, project_id, worktree_path, branch, tmux_target, mode, status, tokens, cost_usd, started, ended, result_summary, diffstat FROM agent_runs").unwrap();
-        conn.prepare("SELECT id, sha256, bytes, created FROM blobs").unwrap();
+        conn.prepare("SELECT id, sha256, bytes, created FROM blobs")
+            .unwrap();
         // v4 indexes exist (query via sqlite_master)
         let idx: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_approvals_status_expires'",
@@ -401,7 +479,9 @@ mod tests {
         let conn = open_db(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        let jm: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        let jm: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(jm.to_lowercase(), "wal");
     }
 
@@ -436,23 +516,144 @@ mod tests {
         }
         // open_db should run v5 migration and reach version 5
         let conn = open_db(&path).unwrap();
-        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
-        assert_eq!(v, 5);
         // v4 data is still there
-        let ap_count: i64 = conn.query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0)).unwrap();
+        let ap_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(ap_count, 1, "existing approval row must survive migration");
-        let ar_count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |r| r.get(0)).unwrap();
+        let ar_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_runs", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(ar_count, 1, "existing agent_run row must survive migration");
         // v5 table exists with expected columns
         conn.prepare("SELECT id, kind, media, path, created, expires_at, reason, meta FROM pins")
             .unwrap();
         // v5 index exists
-        let idx: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pins_expires'",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pins_expires'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(idx, 1, "idx_pins_expires must exist");
+    }
+
+    #[test]
+    fn v5_database_upgrades_to_v6_keeping_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        // hand-build a v5 database with a pin row
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            for sql in &MIGRATIONS[0..5] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 5i64).unwrap();
+            conn.execute(
+                "INSERT INTO pins (id, kind, media, path, created, expires_at, reason, meta)
+                 VALUES ('p1', 'manual', 'screen', '/tmp/p1', 1000, NULL, 'because', '{}')",
+                [],
+            )
+            .unwrap();
+        }
+        // open_db should run the v6 migration and reach the latest version
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        // v5 data is still there
+        let pin_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pins", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pin_count, 1, "existing pin row must survive migration");
+        // v6 table exists with expected columns
+        conn.prepare(
+            "SELECT id, last_run_ms, observations_deleted, pins_expired, api_calls_deleted FROM retention_status",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v6_database_upgrades_to_v7_keeping_retention_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            for sql in &MIGRATIONS[0..6] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 6i64).unwrap();
+            conn.execute(
+                "INSERT INTO retention_status
+                 (id, last_run_ms, observations_deleted, pins_expired, api_calls_deleted)
+                 VALUES ('last', 1000, 1, 2, 3)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        let last_run: i64 = conn
+            .query_row(
+                "SELECT last_run_ms FROM retention_status WHERE id = 'last'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(last_run, 1000);
+        conn.prepare("SELECT id, ts, lang, text, intent, wake_word, handled FROM voice_utterances")
+            .unwrap();
+    }
+
+    #[test]
+    fn v7_database_upgrades_to_v8_keeping_voice_utterances() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            for sql in &MIGRATIONS[0..7] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 7i64).unwrap();
+            conn.execute(
+                "INSERT INTO voice_utterances
+                 (id, ts, lang, text, intent, wake_word, handled)
+                 VALUES ('u1', 1000, 'en', 'hello', 'chat', 'hey rat', 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_db(&path).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM voice_utterances WHERE id = 'u1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, "hello");
+        conn.prepare(
+            "SELECT id, tty, pid, emulator, tmux_target, role, project_id, cmd_hash, first_seen, last_seen, meta FROM terminals",
+        )
+        .unwrap();
+        conn.prepare(
+            "SELECT id, path, kind, before_blob, after_blob, diff, reason, source, risk, created, applied, reverted_by, meta FROM dotfile_edits",
+        )
+        .unwrap();
     }
 }

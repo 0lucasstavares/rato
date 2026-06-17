@@ -11,6 +11,9 @@ pub fn runtime_dir() -> PathBuf {
 }
 
 pub fn socket_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("RAT_SOCKET").filter(|s| !s.is_empty()) {
+        return PathBuf::from(path);
+    }
     runtime_dir().join("ratd.sock")
 }
 
@@ -56,6 +59,17 @@ mod tests {
             "unexpected socket path: {}",
             s.display()
         );
+    }
+
+    #[test]
+    fn socket_path_honors_rat_socket_override() {
+        let old = std::env::var_os("RAT_SOCKET");
+        std::env::set_var("RAT_SOCKET", "/tmp/custom-ratd.sock");
+        assert_eq!(socket_path(), PathBuf::from("/tmp/custom-ratd.sock"));
+        match old {
+            Some(v) => std::env::set_var("RAT_SOCKET", v),
+            None => std::env::remove_var("RAT_SOCKET"),
+        }
     }
 
     #[test]

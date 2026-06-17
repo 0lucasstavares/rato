@@ -21,6 +21,9 @@ rat-workbench = { path = "../rat-workbench" }
 rat-policy = { path = "../rat-policy" }
 rat-ring = { path = "../rat-ring" }
 rat-vision = { path = "../rat-vision" }
+rat-voice = { path = "../rat-voice" }
+rat-dotfile = { path = "../rat-dotfile" }
+rat-terminal = { path = "../rat-terminal" }
 anyhow = { workspace = true }
 async-trait = "0.1"
 clap = { workspace = true }

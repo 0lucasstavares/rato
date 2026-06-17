@@ -20,6 +20,17 @@ pub struct Memory {
     pub archived: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Disclosure {
+    pub id: String,
+    pub ts: i64,
+    pub api_call_id: Option<String>,
+    pub model: String,
+    pub purpose: String,
+    pub memory_ids: Value,
+    pub observation_ids: Value,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewMemory {
     pub r#type: String,
@@ -80,6 +91,93 @@ pub struct NewPushback {
     pub proposals: Value,
     pub confidence: f64,
     pub status: String,
+}
+
+// ---------------------------------------------------------------------------
+// VoiceUtterance (v7)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceUtterance {
+    pub id: String,
+    pub ts: i64,
+    pub lang: String,
+    pub text: String,
+    pub intent: Option<String>,
+    pub wake_word: String,
+    pub handled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewVoiceUtterance {
+    pub lang: String,
+    pub text: String,
+    pub intent: Option<String>,
+    pub wake_word: String,
+    pub handled: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Terminal + DotfileEdit (v8)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Terminal {
+    pub id: String,
+    pub tty: String,
+    pub pid: i64,
+    pub emulator: String,
+    pub tmux_target: Option<String>,
+    /// operator | workbench | foreign | ignored
+    pub role: String,
+    pub project_id: Option<String>,
+    pub cmd_hash: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewTerminal {
+    pub tty: String,
+    pub pid: i64,
+    pub emulator: String,
+    pub tmux_target: Option<String>,
+    pub role: String,
+    pub project_id: Option<String>,
+    pub cmd_hash: String,
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DotfileEdit {
+    pub id: String,
+    pub path: String,
+    pub kind: String,
+    pub before_blob: String,
+    pub after_blob: String,
+    pub diff: String,
+    pub reason: String,
+    pub source: String,
+    pub risk: i64,
+    pub created: i64,
+    pub applied: bool,
+    pub reverted_by: Option<String>,
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewDotfileEdit {
+    pub path: String,
+    pub kind: String,
+    pub before_blob: String,
+    pub after_blob: String,
+    pub diff: String,
+    pub reason: String,
+    pub source: String,
+    pub risk: i64,
+    pub applied: bool,
+    pub meta: Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +307,20 @@ pub struct NewPin {
 }
 
 // ---------------------------------------------------------------------------
+// RetentionStatus (v6)
+// ---------------------------------------------------------------------------
+
+/// Last-prune snapshot, persisted as a single row (id="last") so it survives
+/// daemon restarts. Surfaced via the `retention.status` RPC for the Sensors tab.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RetentionStatus {
+    pub last_run_ms: i64,
+    pub observations_deleted: u32,
+    pub pins_expired: u32,
+    pub api_calls_deleted: u32,
+}
+
+// ---------------------------------------------------------------------------
 // Embedding helpers (Vec<f32> ↔ little-endian bytes)
 // ---------------------------------------------------------------------------
 
@@ -235,7 +347,14 @@ mod tests {
 
     #[test]
     fn embedding_round_trip() {
-        let original: Vec<f32> = vec![1.0, -0.5, 0.0, std::f32::consts::PI, f32::MAX, f32::MIN_POSITIVE];
+        let original: Vec<f32> = vec![
+            1.0,
+            -0.5,
+            0.0,
+            std::f32::consts::PI,
+            f32::MAX,
+            f32::MIN_POSITIVE,
+        ];
         let encoded = encode_embedding(&original);
         assert_eq!(encoded.len(), original.len() * 4);
         let decoded = decode_embedding(&encoded);

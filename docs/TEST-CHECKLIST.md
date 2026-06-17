@@ -60,6 +60,9 @@ Verified live 2026-06-11 against an isolated daemon (sandbox `XDG_*` dirs) + scr
 
 - [x] ⚙ `rat task start --project <repo> --title <t> --adapter fakeagent` → returns a `running`
       AgentRun; a `rato/<slug>` branch + a worktree under `~/.local/share/rato/worktrees/` are created
+- [x] ⚙ Docker executor command construction + RPC validation: `--executor docker --docker-image <image>`
+      records runs as `docker:<image>` and builds `docker run` with the task worktree mounted at
+      `/workspace`
 - [x] ⚙ run advances `running → done` on its own (daemon 3 s poll sweep + poll-on-read in
       `workbench.runs`); the agent's commit lands on the `rato/*` branch, **NOT** on the live repo
       (live `HEAD` unchanged pre-merge)
@@ -85,10 +88,10 @@ Verified live 2026-06-11 against an isolated daemon (sandbox `XDG_*` dirs) + scr
 
 ## M5 — Eyes / screen *(in progress)*
 
-Implementation status as of 2026-06-12: store pins, encrypted ring, trait-based vision pipeline,
-daemon capture-loop seam, pins RPC/CLI, and shell Pins tab are landed. Retention pruner,
-SensorGate health/doctor rows, Calendar tab, fuller Sensors metrics, final acceptance docs, and
-the `m5-eyes` tag remain.
+Implementation status as of 2026-06-15: store pins, encrypted ring, trait-based vision pipeline,
+daemon capture-loop seam, pins RPC/CLI, shell Pins tab, retention pruner, SensorGate health,
+doctor rows, Sensors-tab ring/prune controls, and Calendar tab are landed. Live capture smoke,
+24 h soak, final acceptance docs, and the `m5-eyes` tag remain.
 
 Automated verification already green:
 
@@ -112,18 +115,100 @@ Automated verification already green:
 
 Remaining M5 acceptance:
 
-- [ ] ⚙ retention pruner: never deletes cited observations, summaries, audit rows, or manual pins;
+- [x] ⚙ retention pruner: never deletes cited observations, summaries, audit rows, or manual pins;
       deletes uncited observations older than 180 d and expired auto-pins; processes batches ≤5k
-- [ ] ⚙ clock-skew test: auto-pin created before a clock jump past expiry is expired and files are
+- [x] ⚙ clock-skew test: auto-pin created before a clock jump past expiry is expired and files are
       unlinked; manual pin survives
-- [ ] ⚙ `rat doctor` reports screen/OCR availability, ring directory, and pin count
-- [ ] 👁 Sensors tab shows ring occupancy, last prune counts/time, and pin-last-N control
-- [ ] 👁 Calendar tab shows session timeline with events/observations/agent runs/approvals/pins
+- [x] ⚙ `rat doctor` reports screen/OCR availability, ring occupancy, and pin count
+- [x] ⚙ `retention.status` RPC returns `null` before first prune and persisted prune counts after
+      the nightly job records them.
+- [x] 👁 Sensors tab shows ring occupancy, last prune counts/time, and pin-last-N control
+- [x] 👁 Calendar tab shows session timeline with events/observations/agent runs/approvals/pins
 - [ ] 👁 live smoke with `--features screencast,ocr`: grant portal consent, confirm real OCR
       observations appear in `rat search`, pin last 5 min, verify pin files exist
 - [ ] 👁 24 h soak: CPU <8 % average, ring bounded to 20 min, no unbounded pin/ring growth
-- [ ] ⚙ update docs and tag `m5-eyes`
+- [ ] ⚙ tag `m5-eyes` after live smoke and 24 h soak evidence is recorded
 
-## M6 — Voice *(pending)*
-## M7 — Polish *(pending)*
+## M6 — Voice *(in progress)*
+
+Implementation status as of 2026-06-16: deterministic `rat-voice` core is landed (backend traits,
+fake implementations, RAM-only pre-wake ring, intent router, spoken approval slug, voice-approval
+gate), `voice_utterances` migration/store repo is landed as v7, daemon exposes `voice.status` and
+`voice.utterances`, approval DTOs include `spoken_slug`, approval cards render it, and CLI has
+`rat voice status` / `rat utterances`. The shell Settings tab now surfaces backend-aware voice
+toggles/language smoke buttons, and the avatar MIC chip reflects `voice.status` with a pulse on new
+post-wake utterances. Dashboard M5/M6 additive RPCs use fallbacks so newer tabs still render against
+older daemons that lack `ring.status`, `retention.status`, or `voice.*`.
+
+Automated verification already green:
+
+- [x] ⚙ IntentRouter grammar tables cover English and Portuguese control intents, approval slug
+      utterances, and fallback chat.
+- [x] ⚙ Voice-approval gate: visible pending R2 + correct spoken slug allows approve/deny; hidden
+      popup, R3, wrong slug, and non-pending approvals refuse.
+- [x] ⚙ Two-word spoken slug is deterministic and derived from approval id without schema storage.
+- [x] ⚙ Pre-wake ring is RAM-only API surface, bounded to 8 s-equivalent capacity, and zero-clears on
+      explicit clear/drop.
+- [x] ⚙ `voice_utterances` v7 migration preserves v6 retention data; insert/recent repo round-trips.
+- [x] ⚙ `voice.status` reports default unavailable backends and `voice.utterances` returns recent
+      post-wake rows.
+- [x] 👁 Approvals tab renders the spoken voice slug for pending approval cards.
+- [x] ⚙ `rat voice status`, `rat voice say`, and `rat utterances` CLI surfaces compile and
+      integration tests pass.
+
+Remaining M6 acceptance:
+
+- [x] ⚙ fs-watch non-persistence test around the fake wake/VAD path and writable data/state dirs.
+- [x] ⚙ daemon voice loop with FakeAudioSource/FakeWake/FakeVad/FakeStt/FakeTts records an utterance,
+      routes deterministic local intents, and turns `pin that` into a manual screen-ring pin when
+      a recent segment exists.
+- [x] ⚙ voice approval execution path records `decided_via='voice'` plus utterance id.
+- [x] 👁 Settings voice/wake toggles and language test buttons.
+- [x] 👁 avatar MIC chip pulse / ear-perk wake indicator.
+- [ ] 👁 live smoke with `mic,wake,stt,tts`: both languages wake and command; Piper speaks both voices.
+## M7 — Polish *(in progress)*
+
+Implementation status as of 2026-06-16: the M7 plan is written with schema v8 (v7 is already used by
+M6 voice), store v8 terminals + dotfile edit audit rows are landed, `rat-terminal` has a deterministic
+classifier plus best-effort real `/proc` and tmux pane collection wired into daemon storage,
+`rat-inject` has the pure injection ceremony state machine,
+`rat-dotfile` has the deterministic validation/atomic-apply/revert core, daemon/RPC/CLI read+revert
+surfaces are wired for terminal and config-edit audit rows, and Claude/Codex adapter transcript
+parsers are wired into a daemon watcher that records project-local transcript output as
+`agent_output` observations.
+
+Automated verification already green:
+
+- [x] ⚙ v7→v8 migration preserves voice utterances and creates `terminals` / `dotfile_edits`.
+- [x] ⚙ terminal upsert/list/get refreshes `last_seen`, role, tmux target, and metadata.
+- [x] ⚙ dotfile edit audit rows round-trip before/after blob ids and link `reverted_by`.
+- [x] ⚙ terminal classifier distinguishes RATO tmux workbench, foreign LLM terminal, remembered
+      operator/ignored terminal, and non-agent processes.
+- [x] ⚙ real `/proc` scanner + tmux pane mapper runs in the daemon sensor loop and upserts detected
+      agent terminals while preserving remembered operator/ignored command hashes.
+- [x] ⚙ injection ceremony refuses expired approvals, away mode, missing targets, changed commands,
+      and X11 focus mismatch; bracketed paste and Enter are separate actions.
+- [x] ⚙ DotfileEditor core rejects malformed JSON/TOML/YAML before write, rejects missing MCP
+      commands, accepts JSONC comments, applies with same-directory temp+rename, and reverts exact
+      bytes.
+- [x] ⚙ `terminals.list` / `terminals.set_role` RPCs and `rat terminals` CLI list/classify stored
+      terminal rows.
+- [x] ⚙ `dotfile_edits.list` / `dotfile_edits.revert` RPCs and `rat config-edits` CLI expose the
+      audit feed and byte-exact revert path with linked `reverted_by` rows.
+- [x] ⚙ `dotfile_edits.apply` RPC and `rat config-edits apply` validate managed edits through
+      DotfileEditor, write atomically, store before/after blobs, and reject invalid configs before
+      write or audit.
+- [x] 👁 `Now` tab renders first-sighting terminal dialogue cards with operator/workbench/ignore
+      actions.
+- [x] 👁 `Settings` tab renders a config-change feed with revert actions and diff previews.
+- [x] ⚙ Claude/Codex adapter transcript dirs are project-local and JSONL parsers extract nested
+      `text`/`content` fields into agent-output summaries.
+- [x] ⚙ daemon transcript watcher scans recent Claude/Codex workbench runs, ingests project-local
+      `.jsonl` transcript files as `agent_output` observations, and dedupes by transcript file key.
+
+Remaining M7 acceptance:
+
+- [ ] 👁 Metrics, Memory, Pushback, and injection card UI.
+- [ ] 👁 live smoke: foreign Claude terminal detected/classified; approved tmux paste-and-enter executes.
+
 ## M8 — Hardening *(pending)*

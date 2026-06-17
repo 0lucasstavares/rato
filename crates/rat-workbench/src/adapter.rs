@@ -29,10 +29,17 @@ pub trait AgentAdapter: Send + Sync {
     /// window. The caller wraps this in `cd <worktree> && <cmd>; echo RATO_EXIT=$?`.
     fn headless_cmd(&self, task: &str, worktree: &Path) -> String;
 
+    /// Return the shell command to run inside a container with the worktree
+    /// mounted at `/workspace`. By default this reuses the headless command
+    /// with `/workspace` as the worktree path; adapters can override when their
+    /// host paths are not meaningful inside containers.
+    fn container_cmd(&self, task: &str) -> String {
+        self.headless_cmd(task, Path::new("/workspace"))
+    }
+
     /// Parse an agent transcript file and return a summary string.
-    ///
-    /// Full parsing is deferred to M7 terminal work. Current stubs return
-    /// `None` for all adapters so the caller knows no transcript is available.
+    /// Adapters parse their native JSONL transcript format into plain text
+    /// suitable for `agent_output` observations.
     fn parse_transcript(&self, _transcript_path: &Path) -> Option<String> {
         None
     }
@@ -40,8 +47,7 @@ pub trait AgentAdapter: Send + Sync {
     /// Return the directories where this agent stores transcript files, rooted
     /// at `worktree`.
     ///
-    /// Full parsing is deferred to M7 terminal work. Current stubs return an
-    /// empty `Vec` so callers skip transcript collection gracefully.
+    /// Return an empty `Vec` when the adapter has no known transcript location.
     fn transcript_dirs(&self, _worktree: &Path) -> Vec<std::path::PathBuf> {
         Vec::new()
     }
@@ -69,6 +75,51 @@ fn binary_on_path(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+fn parse_jsonl_transcript(path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut lines = Vec::new();
+    for line in contents.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+        collect_text_fields(&value, &mut lines);
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn collect_text_fields(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(|value| value.as_str()) {
+                push_text(out, text);
+            } else if let Some(content) = map.get("content").and_then(|value| value.as_str()) {
+                push_text(out, content);
+            }
+            for child in map.values() {
+                collect_text_fields(child, out);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                collect_text_fields(child, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_text(out: &mut Vec<String>, text: &str) {
+    let trimmed = text.trim();
+    if !trimmed.is_empty() && out.last().is_none_or(|last| last != trimmed) {
+        out.push(trimmed.to_string());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +169,12 @@ impl AgentAdapter for FakeAgent {
         format!("bash {}", self.fixture_path.display())
     }
 
+    fn container_cmd(&self, _task: &str) -> String {
+        "echo fakeagent fixture is host-only; \
+         use a docker image with the desired agent installed; exit 2"
+            .to_string()
+    }
+
     fn health(&self) -> Result<(), String> {
         if self.fixture_path.exists() {
             Ok(())
@@ -157,6 +214,14 @@ impl AgentAdapter for ClaudeCode {
             shell_quote(task)
         )
     }
+
+    fn parse_transcript(&self, transcript_path: &Path) -> Option<String> {
+        parse_jsonl_transcript(transcript_path)
+    }
+
+    fn transcript_dirs(&self, worktree: &Path) -> Vec<std::path::PathBuf> {
+        vec![worktree.join(".claude/projects")]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +244,14 @@ impl AgentAdapter for Codex {
 
     fn headless_cmd(&self, task: &str, _worktree: &Path) -> String {
         format!("codex exec {}", shell_quote(task))
+    }
+
+    fn parse_transcript(&self, transcript_path: &Path) -> Option<String> {
+        parse_jsonl_transcript(transcript_path)
+    }
+
+    fn transcript_dirs(&self, worktree: &Path) -> Vec<std::path::PathBuf> {
+        vec![worktree.join(".codex/sessions")]
     }
 }
 
@@ -214,7 +287,10 @@ mod tests {
     fn fake_agent_headless_cmd_contains_sh() {
         let fa = FakeAgent::from_manifest();
         let cmd = fa.headless_cmd("do something", Path::new("/tmp/wt"));
-        assert!(cmd.contains("fakeagent.sh"), "cmd should reference fakeagent.sh, got: {cmd}");
+        assert!(
+            cmd.contains("fakeagent.sh"),
+            "cmd should reference fakeagent.sh, got: {cmd}"
+        );
     }
 
     #[test]
@@ -225,9 +301,18 @@ mod tests {
     #[test]
     fn claude_code_headless_cmd_shape() {
         let cmd = ClaudeCode.headless_cmd("fix tests", Path::new("/tmp/wt"));
-        assert!(cmd.contains("claude -p"), "should invoke claude, got: {cmd}");
-        assert!(cmd.contains("--output-format json"), "should set json output, got: {cmd}");
-        assert!(cmd.contains("fix tests"), "should embed task text, got: {cmd}");
+        assert!(
+            cmd.contains("claude -p"),
+            "should invoke claude, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("--output-format json"),
+            "should set json output, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("fix tests"),
+            "should embed task text, got: {cmd}"
+        );
     }
 
     #[test]
@@ -238,8 +323,65 @@ mod tests {
     #[test]
     fn codex_headless_cmd_shape() {
         let cmd = Codex.headless_cmd("refactor", Path::new("/tmp/wt"));
-        assert!(cmd.starts_with("codex exec"), "should start with 'codex exec', got: {cmd}");
-        assert!(cmd.contains("refactor"), "should embed task text, got: {cmd}");
+        assert!(
+            cmd.starts_with("codex exec"),
+            "should start with 'codex exec', got: {cmd}"
+        );
+        assert!(
+            cmd.contains("refactor"),
+            "should embed task text, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn claude_transcript_dirs_are_project_local() {
+        let dirs = ClaudeCode.transcript_dirs(Path::new("/repo"));
+        assert_eq!(
+            dirs,
+            vec![Path::new("/repo/.claude/projects").to_path_buf()]
+        );
+    }
+
+    #[test]
+    fn codex_transcript_dirs_are_project_local() {
+        let dirs = Codex.transcript_dirs(Path::new("/repo"));
+        assert_eq!(dirs, vec![Path::new("/repo/.codex/sessions").to_path_buf()]);
+    }
+
+    #[test]
+    fn claude_jsonl_transcript_extracts_nested_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"fix tests"}]}}"#
+                .to_string()
+                + "\n"
+                + r#"{"type":"assistant","message":{"content":[{"type":"text","text":"updated parser"}]}}"#
+                + "\n",
+        )
+        .unwrap();
+
+        let parsed = ClaudeCode.parse_transcript(&path).unwrap();
+        assert!(parsed.contains("fix tests"));
+        assert!(parsed.contains("updated parser"));
+    }
+
+    #[test]
+    fn codex_jsonl_transcript_extracts_content_and_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"role":"user","content":"refactor"}"#.to_string()
+                + "\n"
+                + r#"{"event":"message","text":"done"}"#
+                + "\n",
+        )
+        .unwrap();
+
+        let parsed = Codex.parse_transcript(&path).unwrap();
+        assert_eq!(parsed, "refactor\ndone");
     }
 
     #[test]
@@ -252,5 +394,12 @@ mod tests {
     fn shell_quote_plain() {
         let q = shell_quote("plain task");
         assert_eq!(q, "'plain task'");
+    }
+
+    #[test]
+    fn fake_agent_container_cmd_is_explicitly_host_only() {
+        let fa = FakeAgent::from_manifest();
+        let cmd = fa.container_cmd("task");
+        assert!(cmd.contains("host-only"));
     }
 }

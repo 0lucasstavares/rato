@@ -4,5 +4,7 @@ pub mod ingest;
 pub mod memory_searcher;
 pub mod mode;
 pub mod pins;
+pub mod sensors_health;
 pub mod server;
 pub mod sessionizer;
+pub mod voice_loop;

@@ -14,43 +14,142 @@ use rat_proto::{Event, NewEvent, NewObservation, Observation, Project, WorkSessi
 use crate::db::open_db;
 use crate::error::StoreError;
 use crate::rows::{
-    decode_embedding, encode_embedding, AgentRun, Approval, Blob, Memory, MemoryFilter, NewAgentRun,
-    NewApproval, NewMemory, NewPin, NewPushback, Pin, Pushback,
+    decode_embedding, encode_embedding, AgentRun, Approval, Blob, Disclosure, DotfileEdit, Memory,
+    MemoryFilter, NewAgentRun, NewApproval, NewDotfileEdit, NewMemory, NewPin, NewPushback,
+    NewTerminal, NewVoiceUtterance, Pin, Pushback, RetentionStatus, Terminal, VoiceUtterance,
 };
 
 type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
 
 enum Cmd {
-    Append { ev: NewEvent, reply: Reply<Event> },
-    Recent { limit: u32, reply: Reply<Vec<Event>> },
-    Count { reply: Reply<u64> },
-    UpsertProject { root_path: String, name: String, reply: Reply<Project> },
-    ListProjects { reply: Reply<Vec<Project>> },
-    AddObservation { obs: NewObservation, reply: Reply<Observation> },
-    RecentObservations { limit: u32, kind: Option<String>, reply: Reply<Vec<Observation>> },
-    SessionOpen { ws: WorkSession, reply: Reply<()> },
-    SessionTouch { id: String, last_activity: i64, commands: u32, reply: Reply<()> },
-    SessionClose { id: String, ended: i64, reply: Reply<()> },
-    RecentSessions { limit: u32, reply: Reply<Vec<WorkSession>> },
-    OpenSessions { reply: Reply<Vec<WorkSession>> },
+    Append {
+        ev: NewEvent,
+        reply: Reply<Event>,
+    },
+    Recent {
+        limit: u32,
+        reply: Reply<Vec<Event>>,
+    },
+    Count {
+        reply: Reply<u64>,
+    },
+    UpsertProject {
+        root_path: String,
+        name: String,
+        reply: Reply<Project>,
+    },
+    ListProjects {
+        reply: Reply<Vec<Project>>,
+    },
+    AddObservation {
+        obs: NewObservation,
+        reply: Reply<Observation>,
+    },
+    RecentObservations {
+        limit: u32,
+        kind: Option<String>,
+        reply: Reply<Vec<Observation>>,
+    },
+    SessionOpen {
+        ws: WorkSession,
+        reply: Reply<()>,
+    },
+    SessionTouch {
+        id: String,
+        last_activity: i64,
+        commands: u32,
+        reply: Reply<()>,
+    },
+    SessionClose {
+        id: String,
+        ended: i64,
+        reply: Reply<()>,
+    },
+    RecentSessions {
+        limit: u32,
+        reply: Reply<Vec<WorkSession>>,
+    },
+    OpenSessions {
+        reply: Reply<Vec<WorkSession>>,
+    },
     // v3 commands
-    AddMemory { mem: NewMemory, reply: Reply<Memory> },
-    UpdateMemoryConfidence { id: String, confidence: f64, reply: Reply<()> },
-    ArchiveMemory { id: String, reply: Reply<()> },
-    ListMemories { filter: MemoryFilter, reply: Reply<Vec<Memory>> },
-    FtsObservations { query: String, limit: u32, reply: Reply<Vec<String>> },
-    FtsMemories { query: String, limit: u32, reply: Reply<Vec<String>> },
-    UnembeddedObservations { kinds: Vec<String>, limit: u32, reply: Reply<Vec<Observation>> },
-    SetObservationEmbedding { obs_id: String, embedding: Vec<f32>, reply: Reply<()> },
-    SetMemoryEmbedding { memory_id: String, embedding: Vec<f32>, reply: Reply<()> },
-    AllObservationEmbeddings { limit: u32, reply: Reply<Vec<(String, Vec<f32>)>> },
-    AllMemoryEmbeddings { limit: u32, reply: Reply<Vec<(String, Vec<f32>)>> },
-    ObservationsByIds { ids: Vec<String>, reply: Reply<Vec<Observation>> },
-    InsertPushback { pb: NewPushback, reply: Reply<Pushback> },
-    RecentPushbacks { limit: u32, reply: Reply<Vec<Pushback>> },
-    GetPushback { id: String, reply: Reply<Option<Pushback>> },
-    PushbackFeedback { id: String, status: String, decided_at: i64, latency_ms: i64, reply: Reply<()> },
-    PushbacksSince { ts: i64, reply: Reply<Vec<Pushback>> },
+    AddMemory {
+        mem: NewMemory,
+        reply: Reply<Memory>,
+    },
+    UpdateMemoryConfidence {
+        id: String,
+        confidence: f64,
+        reply: Reply<()>,
+    },
+    ArchiveMemory {
+        id: String,
+        reply: Reply<()>,
+    },
+    ListMemories {
+        filter: MemoryFilter,
+        reply: Reply<Vec<Memory>>,
+    },
+    FtsObservations {
+        query: String,
+        limit: u32,
+        reply: Reply<Vec<String>>,
+    },
+    FtsMemories {
+        query: String,
+        limit: u32,
+        reply: Reply<Vec<String>>,
+    },
+    UnembeddedObservations {
+        kinds: Vec<String>,
+        limit: u32,
+        reply: Reply<Vec<Observation>>,
+    },
+    SetObservationEmbedding {
+        obs_id: String,
+        embedding: Vec<f32>,
+        reply: Reply<()>,
+    },
+    SetMemoryEmbedding {
+        memory_id: String,
+        embedding: Vec<f32>,
+        reply: Reply<()>,
+    },
+    AllObservationEmbeddings {
+        limit: u32,
+        reply: Reply<Vec<(String, Vec<f32>)>>,
+    },
+    AllMemoryEmbeddings {
+        limit: u32,
+        reply: Reply<Vec<(String, Vec<f32>)>>,
+    },
+    ObservationsByIds {
+        ids: Vec<String>,
+        reply: Reply<Vec<Observation>>,
+    },
+    InsertPushback {
+        pb: NewPushback,
+        reply: Reply<Pushback>,
+    },
+    RecentPushbacks {
+        limit: u32,
+        reply: Reply<Vec<Pushback>>,
+    },
+    GetPushback {
+        id: String,
+        reply: Reply<Option<Pushback>>,
+    },
+    PushbackFeedback {
+        id: String,
+        status: String,
+        decided_at: i64,
+        latency_ms: i64,
+        reply: Reply<()>,
+    },
+    PushbacksSince {
+        ts: i64,
+        reply: Reply<Vec<Pushback>>,
+    },
     InsertApiCall {
         model: String,
         purpose: String,
@@ -69,8 +168,19 @@ enum Cmd {
         observation_ids: Vec<String>,
         reply: Reply<String>,
     },
-    ClosedSessionsWithoutSummary { limit: u32, reply: Reply<Vec<WorkSession>> },
-    SetSessionSummary { id: String, summary: String, reply: Reply<()> },
+    RecentDisclosures {
+        limit: u32,
+        reply: Reply<Vec<Disclosure>>,
+    },
+    ClosedSessionsWithoutSummary {
+        limit: u32,
+        reply: Reply<Vec<WorkSession>>,
+    },
+    SetSessionSummary {
+        id: String,
+        summary: String,
+        reply: Reply<()>,
+    },
     ObservationsBetween {
         project_id: String,
         from_ms: i64,
@@ -84,10 +194,23 @@ enum Cmd {
         max_rows: u32,
         reply: Reply<u32>,
     },
+    DeleteApiCallsOlderThan {
+        cutoff_ms: i64,
+        max_rows: u32,
+        reply: Reply<u32>,
+    },
     // v4 — approvals
-    InsertApproval { new_approval: NewApproval, reply: Reply<Approval> },
-    PendingApprovals { reply: Reply<Vec<Approval>> },
-    GetApproval { id: String, reply: Reply<Option<Approval>> },
+    InsertApproval {
+        new_approval: NewApproval,
+        reply: Reply<Approval>,
+    },
+    PendingApprovals {
+        reply: Reply<Vec<Approval>>,
+    },
+    GetApproval {
+        id: String,
+        reply: Reply<Option<Approval>>,
+    },
     DecideApproval {
         id: String,
         status: String,
@@ -96,10 +219,20 @@ enum Cmd {
         note: Option<String>,
         reply: Reply<Approval>,
     },
-    SetApprovalExecution { id: String, execution: serde_json::Value, reply: Reply<()> },
-    ExpireApprovals { now_ms: i64, reply: Reply<u32> },
+    SetApprovalExecution {
+        id: String,
+        execution: serde_json::Value,
+        reply: Reply<()>,
+    },
+    ExpireApprovals {
+        now_ms: i64,
+        reply: Reply<u32>,
+    },
     // v4 — agent_runs
-    InsertAgentRun { run: NewAgentRun, reply: Reply<AgentRun> },
+    InsertAgentRun {
+        run: NewAgentRun,
+        reply: Reply<AgentRun>,
+    },
     UpdateAgentRunStatus {
         id: String,
         status: String,
@@ -108,19 +241,96 @@ enum Cmd {
         diffstat: Option<serde_json::Value>,
         reply: Reply<()>,
     },
-    RecentAgentRuns { n: u32, reply: Reply<Vec<AgentRun>> },
-    GetAgentRun { id: String, reply: Reply<Option<AgentRun>> },
+    RecentAgentRuns {
+        n: u32,
+        reply: Reply<Vec<AgentRun>>,
+    },
+    GetAgentRun {
+        id: String,
+        reply: Reply<Option<AgentRun>>,
+    },
     // v4 — blobs
-    InsertBlob { bytes: Vec<u8>, created: i64, reply: Reply<Blob> },
-    GetBlob { id: String, reply: Reply<Option<Blob>> },
+    InsertBlob {
+        bytes: Vec<u8>,
+        created: i64,
+        reply: Reply<Blob>,
+    },
+    GetBlob {
+        id: String,
+        reply: Reply<Option<Blob>>,
+    },
     // v4 — project lookup by id
-    GetProjectById { id: String, reply: Reply<Option<Project>> },
+    GetProjectById {
+        id: String,
+        reply: Reply<Option<Project>>,
+    },
     // v5 — pins
-    InsertPin { id: Option<String>, new_pin: NewPin, reply: Reply<Pin> },
-    ListPins { reply: Reply<Vec<Pin>> },
-    GetPin { id: String, reply: Reply<Option<Pin>> },
-    ExpirePins { now_ms: i64, reply: Reply<Vec<Pin>> },
-    DeletePin { id: String, reply: Reply<()> },
+    InsertPin {
+        id: Option<String>,
+        new_pin: NewPin,
+        reply: Reply<Pin>,
+    },
+    ListPins {
+        reply: Reply<Vec<Pin>>,
+    },
+    GetPin {
+        id: String,
+        reply: Reply<Option<Pin>>,
+    },
+    ExpirePins {
+        now_ms: i64,
+        reply: Reply<Vec<Pin>>,
+    },
+    DeletePin {
+        id: String,
+        reply: Reply<()>,
+    },
+    // v6 — retention status
+    GetRetentionStatus {
+        reply: Reply<Option<RetentionStatus>>,
+    },
+    SetRetentionStatus {
+        status: RetentionStatus,
+        reply: Reply<()>,
+    },
+    // v7 — voice utterances
+    InsertVoiceUtterance {
+        new_utterance: NewVoiceUtterance,
+        reply: Reply<VoiceUtterance>,
+    },
+    RecentVoiceUtterances {
+        limit: u32,
+        reply: Reply<Vec<VoiceUtterance>>,
+    },
+    // v8 — terminals + dotfile edits
+    UpsertTerminal {
+        terminal: NewTerminal,
+        reply: Reply<Terminal>,
+    },
+    ListTerminals {
+        reply: Reply<Vec<Terminal>>,
+    },
+    GetTerminal {
+        id: String,
+        reply: Reply<Option<Terminal>>,
+    },
+    InsertDotfileEdit {
+        edit: NewDotfileEdit,
+        reply: Reply<DotfileEdit>,
+    },
+    RecentDotfileEdits {
+        limit: u32,
+        reply: Reply<Vec<DotfileEdit>>,
+    },
+    GetDotfileEdit {
+        id: String,
+        reply: Reply<Option<DotfileEdit>>,
+    },
+    MarkDotfileEditReverted {
+        id: String,
+        reverted_by: String,
+        reply: Reply<DotfileEdit>,
+    },
 }
 
 /// Cloneable handle to the single-writer SQLite actor thread.
@@ -143,39 +353,57 @@ impl Store {
 
     pub async fn append(&self, ev: NewEvent) -> Result<Event, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::Append { ev, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::Append { ev, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn recent(&self, limit: u32) -> Result<Vec<Event>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::Recent { limit, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::Recent { limit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn count(&self) -> Result<u64, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::Count { reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::Count { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
-    pub async fn upsert_project(&self, root_path: String, name: String) -> Result<Project, StoreError> {
+    pub async fn upsert_project(
+        &self,
+        root_path: String,
+        name: String,
+    ) -> Result<Project, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::UpsertProject { root_path, name, reply: rtx })
+            .send(Cmd::UpsertProject {
+                root_path,
+                name,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::ListProjects { reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::ListProjects { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn add_observation(&self, obs: NewObservation) -> Result<Observation, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::AddObservation { obs, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::AddObservation { obs, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
@@ -186,14 +414,20 @@ impl Store {
     ) -> Result<Vec<Observation>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::RecentObservations { limit, kind, reply: rtx })
+            .send(Cmd::RecentObservations {
+                limit,
+                kind,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn session_open(&self, ws: WorkSession) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::SessionOpen { ws, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::SessionOpen { ws, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
@@ -205,26 +439,41 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::SessionTouch { id, last_activity, commands, reply: rtx })
+            .send(Cmd::SessionTouch {
+                id,
+                last_activity,
+                commands,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn session_close(&self, id: String, ended: i64) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::SessionClose { id, ended, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::SessionClose {
+                id,
+                ended,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn recent_sessions(&self, limit: u32) -> Result<Vec<WorkSession>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::RecentSessions { limit, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::RecentSessions { limit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn open_sessions(&self) -> Result<Vec<WorkSession>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::OpenSessions { reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::OpenSessions { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
@@ -234,7 +483,9 @@ impl Store {
 
     pub async fn add_memory(&self, mem: NewMemory) -> Result<Memory, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::AddMemory { mem, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::AddMemory { mem, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
@@ -245,7 +496,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::UpdateMemoryConfidence { id, confidence, reply: rtx })
+            .send(Cmd::UpdateMemoryConfidence {
+                id,
+                confidence,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -275,21 +530,25 @@ impl Store {
     ) -> Result<Vec<String>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::FtsObservations { query, limit, reply: rtx })
+            .send(Cmd::FtsObservations {
+                query,
+                limit,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     /// Full-text search over memories.
     /// ids ordered best-match first; consumer derives 1-based rank from position.
-    pub async fn fts_memories(
-        &self,
-        query: String,
-        limit: u32,
-    ) -> Result<Vec<String>, StoreError> {
+    pub async fn fts_memories(&self, query: String, limit: u32) -> Result<Vec<String>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::FtsMemories { query, limit, reply: rtx })
+            .send(Cmd::FtsMemories {
+                query,
+                limit,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -301,7 +560,11 @@ impl Store {
     ) -> Result<Vec<Observation>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::UnembeddedObservations { kinds, limit, reply: rtx })
+            .send(Cmd::UnembeddedObservations {
+                kinds,
+                limit,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -313,7 +576,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::SetObservationEmbedding { obs_id, embedding, reply: rtx })
+            .send(Cmd::SetObservationEmbedding {
+                obs_id,
+                embedding,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -325,7 +592,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::SetMemoryEmbedding { memory_id, embedding, reply: rtx })
+            .send(Cmd::SetMemoryEmbedding {
+                memory_id,
+                embedding,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -396,7 +667,13 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::PushbackFeedback { id, status, decided_at, latency_ms, reply: rtx })
+            .send(Cmd::PushbackFeedback {
+                id,
+                status,
+                decided_at,
+                latency_ms,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -422,7 +699,16 @@ impl Store {
     ) -> Result<String, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertApiCall { model, purpose, tokens_in, tokens_out, cost_usd, ok, error, reply: rtx })
+            .send(Cmd::InsertApiCall {
+                model,
+                purpose,
+                tokens_in,
+                tokens_out,
+                cost_usd,
+                ok,
+                error,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -449,6 +735,14 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
+    pub async fn recent_disclosures(&self, limit: u32) -> Result<Vec<Disclosure>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::RecentDisclosures { limit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
     pub async fn closed_sessions_without_summary(
         &self,
         limit: u32,
@@ -460,14 +754,14 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
-    pub async fn set_session_summary(
-        &self,
-        id: String,
-        summary: String,
-    ) -> Result<(), StoreError> {
+    pub async fn set_session_summary(&self, id: String, summary: String) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::SetSessionSummary { id, summary, reply: rtx })
+            .send(Cmd::SetSessionSummary {
+                id,
+                summary,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -510,6 +804,24 @@ impl Store {
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
+    /// Delete `api_calls` rows with `ts < cutoff_ms`, in batches of at most
+    /// `max_rows`. Returns the number of rows deleted (just this call).
+    pub async fn delete_api_calls_older_than(
+        &self,
+        cutoff_ms: i64,
+        max_rows: u32,
+    ) -> Result<u32, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::DeleteApiCallsOlderThan {
+                cutoff_ms,
+                max_rows,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
     // -----------------------------------------------------------------------
     // v4 store API — approvals
     // -----------------------------------------------------------------------
@@ -517,7 +829,10 @@ impl Store {
     pub async fn insert_approval(&self, new_approval: NewApproval) -> Result<Approval, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertApproval { new_approval, reply: rtx })
+            .send(Cmd::InsertApproval {
+                new_approval,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -549,7 +864,14 @@ impl Store {
     ) -> Result<Approval, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::DecideApproval { id, status, decided_at, decided_via, note, reply: rtx })
+            .send(Cmd::DecideApproval {
+                id,
+                status,
+                decided_at,
+                decided_via,
+                note,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -561,7 +883,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::SetApprovalExecution { id, execution, reply: rtx })
+            .send(Cmd::SetApprovalExecution {
+                id,
+                execution,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -597,7 +923,14 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::UpdateAgentRunStatus { id, status, ended, result_summary, diffstat, reply: rtx })
+            .send(Cmd::UpdateAgentRunStatus {
+                id,
+                status,
+                ended,
+                result_summary,
+                diffstat,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -627,7 +960,11 @@ impl Store {
     pub async fn insert_blob(&self, bytes: Vec<u8>, created: i64) -> Result<Blob, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertBlob { bytes, created, reply: rtx })
+            .send(Cmd::InsertBlob {
+                bytes,
+                created,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -655,7 +992,11 @@ impl Store {
     pub async fn insert_pin(&self, new_pin: NewPin) -> Result<Pin, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertPin { id: None, new_pin, reply: rtx })
+            .send(Cmd::InsertPin {
+                id: None,
+                new_pin,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -663,7 +1004,11 @@ impl Store {
     pub async fn insert_pin_with_id(&self, id: String, new_pin: NewPin) -> Result<Pin, StoreError> {
         let (rtx, rrx) = oneshot::channel();
         self.tx
-            .send(Cmd::InsertPin { id: Some(id), new_pin, reply: rtx })
+            .send(Cmd::InsertPin {
+                id: Some(id),
+                new_pin,
+                reply: rtx,
+            })
             .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
@@ -671,13 +1016,17 @@ impl Store {
     /// List all pins, newest first by created.
     pub async fn list_pins(&self) -> Result<Vec<Pin>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::ListPins { reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::ListPins { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
     pub async fn get_pin(&self, id: String) -> Result<Option<Pin>, StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::GetPin { id, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::GetPin { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 
@@ -693,7 +1042,134 @@ impl Store {
 
     pub async fn delete_pin(&self, id: String) -> Result<(), StoreError> {
         let (rtx, rrx) = oneshot::channel();
-        self.tx.send(Cmd::DeletePin { id, reply: rtx }).map_err(|_| StoreError::ActorGone)?;
+        self.tx
+            .send(Cmd::DeletePin { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 store API — retention status
+    // -----------------------------------------------------------------------
+
+    /// Read the last-prune snapshot (if the nightly job has run at least once).
+    pub async fn get_retention_status(&self) -> Result<Option<RetentionStatus>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetRetentionStatus { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    /// Upsert the last-prune snapshot (single row, id="last").
+    pub async fn set_retention_status(&self, status: RetentionStatus) -> Result<(), StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SetRetentionStatus { status, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    // -----------------------------------------------------------------------
+    // v7 store API — voice utterances
+    // -----------------------------------------------------------------------
+
+    pub async fn insert_voice_utterance(
+        &self,
+        new_utterance: NewVoiceUtterance,
+    ) -> Result<VoiceUtterance, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertVoiceUtterance {
+                new_utterance,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn recent_voice_utterances(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<VoiceUtterance>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::RecentVoiceUtterances { limit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    // -----------------------------------------------------------------------
+    // v8 store API — terminals + dotfile edits
+    // -----------------------------------------------------------------------
+
+    pub async fn upsert_terminal(&self, terminal: NewTerminal) -> Result<Terminal, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::UpsertTerminal {
+                terminal,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn list_terminals(&self) -> Result<Vec<Terminal>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ListTerminals { reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_terminal(&self, id: String) -> Result<Option<Terminal>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetTerminal { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn insert_dotfile_edit(
+        &self,
+        edit: NewDotfileEdit,
+    ) -> Result<DotfileEdit, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::InsertDotfileEdit { edit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn recent_dotfile_edits(&self, limit: u32) -> Result<Vec<DotfileEdit>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::RecentDotfileEdits { limit, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn get_dotfile_edit(&self, id: String) -> Result<Option<DotfileEdit>, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetDotfileEdit { id, reply: rtx })
+            .map_err(|_| StoreError::ActorGone)?;
+        rrx.await.map_err(|_| StoreError::ActorGone)?
+    }
+
+    pub async fn mark_dotfile_edit_reverted(
+        &self,
+        id: String,
+        reverted_by: String,
+    ) -> Result<DotfileEdit, StoreError> {
+        let (rtx, rrx) = oneshot::channel();
+        self.tx
+            .send(Cmd::MarkDotfileEditReverted {
+                id,
+                reverted_by,
+                reply: rtx,
+            })
+            .map_err(|_| StoreError::ActorGone)?;
         rrx.await.map_err(|_| StoreError::ActorGone)?
     }
 }
@@ -710,7 +1186,11 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::Count { reply } => {
                 let _ = reply.send(do_count(&conn));
             }
-            Cmd::UpsertProject { root_path, name, reply } => {
+            Cmd::UpsertProject {
+                root_path,
+                name,
+                reply,
+            } => {
                 let _ = reply.send(do_upsert_project(&conn, clock.as_ref(), &root_path, &name));
             }
             Cmd::ListProjects { reply } => {
@@ -725,7 +1205,12 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::SessionOpen { ws, reply } => {
                 let _ = reply.send(do_session_open(&conn, &ws));
             }
-            Cmd::SessionTouch { id, last_activity, commands, reply } => {
+            Cmd::SessionTouch {
+                id,
+                last_activity,
+                commands,
+                reply,
+            } => {
                 let _ = reply.send(do_session_touch(&conn, &id, last_activity, commands));
             }
             Cmd::SessionClose { id, ended, reply } => {
@@ -741,8 +1226,17 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::AddMemory { mem, reply } => {
                 let _ = reply.send(do_add_memory(&conn, clock.as_ref(), mem));
             }
-            Cmd::UpdateMemoryConfidence { id, confidence, reply } => {
-                let _ = reply.send(do_update_memory_confidence(&conn, clock.as_ref(), &id, confidence));
+            Cmd::UpdateMemoryConfidence {
+                id,
+                confidence,
+                reply,
+            } => {
+                let _ = reply.send(do_update_memory_confidence(
+                    &conn,
+                    clock.as_ref(),
+                    &id,
+                    confidence,
+                ));
             }
             Cmd::ArchiveMemory { id, reply } => {
                 let _ = reply.send(do_archive_memory(&conn, clock.as_ref(), &id));
@@ -750,19 +1244,39 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::ListMemories { filter, reply } => {
                 let _ = reply.send(do_list_memories(&conn, &filter));
             }
-            Cmd::FtsObservations { query, limit, reply } => {
+            Cmd::FtsObservations {
+                query,
+                limit,
+                reply,
+            } => {
                 let _ = reply.send(do_fts_observations(&conn, &query, limit));
             }
-            Cmd::FtsMemories { query, limit, reply } => {
+            Cmd::FtsMemories {
+                query,
+                limit,
+                reply,
+            } => {
                 let _ = reply.send(do_fts_memories(&conn, &query, limit));
             }
-            Cmd::UnembeddedObservations { kinds, limit, reply } => {
+            Cmd::UnembeddedObservations {
+                kinds,
+                limit,
+                reply,
+            } => {
                 let _ = reply.send(do_unembedded_observations(&conn, &kinds, limit));
             }
-            Cmd::SetObservationEmbedding { obs_id, embedding, reply } => {
+            Cmd::SetObservationEmbedding {
+                obs_id,
+                embedding,
+                reply,
+            } => {
                 let _ = reply.send(do_set_observation_embedding(&conn, &obs_id, &embedding));
             }
-            Cmd::SetMemoryEmbedding { memory_id, embedding, reply } => {
+            Cmd::SetMemoryEmbedding {
+                memory_id,
+                embedding,
+                reply,
+            } => {
                 let _ = reply.send(do_set_memory_embedding(&conn, &memory_id, &embedding));
             }
             Cmd::AllObservationEmbeddings { limit, reply } => {
@@ -783,23 +1297,62 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::GetPushback { id, reply } => {
                 let _ = reply.send(do_get_pushback(&conn, &id));
             }
-            Cmd::PushbackFeedback { id, status, decided_at, latency_ms, reply } => {
-                let _ = reply.send(do_pushback_feedback(&conn, &id, &status, decided_at, latency_ms));
+            Cmd::PushbackFeedback {
+                id,
+                status,
+                decided_at,
+                latency_ms,
+                reply,
+            } => {
+                let _ = reply.send(do_pushback_feedback(
+                    &conn, &id, &status, decided_at, latency_ms,
+                ));
             }
             Cmd::PushbacksSince { ts, reply } => {
                 let _ = reply.send(do_pushbacks_since(&conn, ts));
             }
-            Cmd::InsertApiCall { model, purpose, tokens_in, tokens_out, cost_usd, ok, error, reply } => {
+            Cmd::InsertApiCall {
+                model,
+                purpose,
+                tokens_in,
+                tokens_out,
+                cost_usd,
+                ok,
+                error,
+                reply,
+            } => {
                 let _ = reply.send(do_insert_api_call(
-                    &conn, clock.as_ref(), &model, &purpose,
-                    tokens_in, tokens_out, cost_usd, ok, error.as_deref(),
+                    &conn,
+                    clock.as_ref(),
+                    &model,
+                    &purpose,
+                    tokens_in,
+                    tokens_out,
+                    cost_usd,
+                    ok,
+                    error.as_deref(),
                 ));
             }
-            Cmd::InsertDisclosure { api_call_id, model, purpose, memory_ids, observation_ids, reply } => {
+            Cmd::InsertDisclosure {
+                api_call_id,
+                model,
+                purpose,
+                memory_ids,
+                observation_ids,
+                reply,
+            } => {
                 let _ = reply.send(do_insert_disclosure(
-                    &conn, clock.as_ref(),
-                    api_call_id.as_deref(), &model, &purpose, &memory_ids, &observation_ids,
+                    &conn,
+                    clock.as_ref(),
+                    api_call_id.as_deref(),
+                    &model,
+                    &purpose,
+                    &memory_ids,
+                    &observation_ids,
                 ));
+            }
+            Cmd::RecentDisclosures { limit, reply } => {
+                let _ = reply.send(do_recent_disclosures(&conn, limit));
             }
             Cmd::ClosedSessionsWithoutSummary { limit, reply } => {
                 let _ = reply.send(do_closed_sessions_without_summary(&conn, limit));
@@ -807,14 +1360,46 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::SetSessionSummary { id, summary, reply } => {
                 let _ = reply.send(do_set_session_summary(&conn, &id, &summary));
             }
-            Cmd::ObservationsBetween { project_id, from_ms, to_ms, limit, reply } => {
-                let _ = reply.send(do_observations_between(&conn, &project_id, from_ms, to_ms, limit));
+            Cmd::ObservationsBetween {
+                project_id,
+                from_ms,
+                to_ms,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(do_observations_between(
+                    &conn,
+                    &project_id,
+                    from_ms,
+                    to_ms,
+                    limit,
+                ));
             }
-            Cmd::DeleteObservationsOlderThan { cutoff_ms, protected_ids, max_rows, reply } => {
-                let _ = reply.send(do_delete_observations_older_than(&conn, cutoff_ms, &protected_ids, max_rows));
+            Cmd::DeleteObservationsOlderThan {
+                cutoff_ms,
+                protected_ids,
+                max_rows,
+                reply,
+            } => {
+                let _ = reply.send(do_delete_observations_older_than(
+                    &conn,
+                    cutoff_ms,
+                    &protected_ids,
+                    max_rows,
+                ));
+            }
+            Cmd::DeleteApiCallsOlderThan {
+                cutoff_ms,
+                max_rows,
+                reply,
+            } => {
+                let _ = reply.send(do_delete_api_calls_older_than(&conn, cutoff_ms, max_rows));
             }
             // v4 — approvals
-            Cmd::InsertApproval { new_approval, reply } => {
+            Cmd::InsertApproval {
+                new_approval,
+                reply,
+            } => {
                 let _ = reply.send(do_insert_approval(&conn, clock.as_ref(), new_approval));
             }
             Cmd::PendingApprovals { reply } => {
@@ -823,10 +1408,28 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::GetApproval { id, reply } => {
                 let _ = reply.send(do_get_approval(&conn, &id));
             }
-            Cmd::DecideApproval { id, status, decided_at, decided_via, note, reply } => {
-                let _ = reply.send(do_decide_approval(&conn, &id, &status, decided_at, &decided_via, note.as_deref()));
+            Cmd::DecideApproval {
+                id,
+                status,
+                decided_at,
+                decided_via,
+                note,
+                reply,
+            } => {
+                let _ = reply.send(do_decide_approval(
+                    &conn,
+                    &id,
+                    &status,
+                    decided_at,
+                    &decided_via,
+                    note.as_deref(),
+                ));
             }
-            Cmd::SetApprovalExecution { id, execution, reply } => {
+            Cmd::SetApprovalExecution {
+                id,
+                execution,
+                reply,
+            } => {
                 let _ = reply.send(do_set_approval_execution(&conn, &id, &execution));
             }
             Cmd::ExpireApprovals { now_ms, reply } => {
@@ -836,8 +1439,22 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             Cmd::InsertAgentRun { run, reply } => {
                 let _ = reply.send(do_insert_agent_run(&conn, run));
             }
-            Cmd::UpdateAgentRunStatus { id, status, ended, result_summary, diffstat, reply } => {
-                let _ = reply.send(do_update_agent_run_status(&conn, &id, &status, ended, result_summary.as_deref(), diffstat.as_ref()));
+            Cmd::UpdateAgentRunStatus {
+                id,
+                status,
+                ended,
+                result_summary,
+                diffstat,
+                reply,
+            } => {
+                let _ = reply.send(do_update_agent_run_status(
+                    &conn,
+                    &id,
+                    &status,
+                    ended,
+                    result_summary.as_deref(),
+                    diffstat.as_ref(),
+                ));
             }
             Cmd::RecentAgentRuns { n, reply } => {
                 let _ = reply.send(do_recent_agent_runs(&conn, n));
@@ -846,7 +1463,11 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
                 let _ = reply.send(do_get_agent_run(&conn, &id));
             }
             // v4 — blobs
-            Cmd::InsertBlob { bytes, created, reply } => {
+            Cmd::InsertBlob {
+                bytes,
+                created,
+                reply,
+            } => {
                 let _ = reply.send(do_insert_blob(&conn, &bytes, created));
             }
             Cmd::GetBlob { id, reply } => {
@@ -871,6 +1492,53 @@ fn actor_loop(conn: Connection, clock: Arc<dyn Clock>, rx: mpsc::Receiver<Cmd>) 
             }
             Cmd::DeletePin { id, reply } => {
                 let _ = reply.send(do_delete_pin(&conn, &id));
+            }
+            // v6 — retention status
+            Cmd::GetRetentionStatus { reply } => {
+                let _ = reply.send(do_get_retention_status(&conn));
+            }
+            Cmd::SetRetentionStatus { status, reply } => {
+                let _ = reply.send(do_set_retention_status(&conn, status));
+            }
+            // v7 — voice utterances
+            Cmd::InsertVoiceUtterance {
+                new_utterance,
+                reply,
+            } => {
+                let _ = reply.send(do_insert_voice_utterance(
+                    &conn,
+                    clock.as_ref(),
+                    new_utterance,
+                ));
+            }
+            Cmd::RecentVoiceUtterances { limit, reply } => {
+                let _ = reply.send(do_recent_voice_utterances(&conn, limit));
+            }
+            // v8 — terminals + dotfile edits
+            Cmd::UpsertTerminal { terminal, reply } => {
+                let _ = reply.send(do_upsert_terminal(&conn, clock.as_ref(), terminal));
+            }
+            Cmd::ListTerminals { reply } => {
+                let _ = reply.send(do_list_terminals(&conn));
+            }
+            Cmd::GetTerminal { id, reply } => {
+                let _ = reply.send(do_get_terminal(&conn, &id));
+            }
+            Cmd::InsertDotfileEdit { edit, reply } => {
+                let _ = reply.send(do_insert_dotfile_edit(&conn, clock.as_ref(), edit));
+            }
+            Cmd::RecentDotfileEdits { limit, reply } => {
+                let _ = reply.send(do_recent_dotfile_edits(&conn, limit));
+            }
+            Cmd::GetDotfileEdit { id, reply } => {
+                let _ = reply.send(do_get_dotfile_edit(&conn, &id));
+            }
+            Cmd::MarkDotfileEditReverted {
+                id,
+                reverted_by,
+                reply,
+            } => {
+                let _ = reply.send(do_mark_dotfile_edit_reverted(&conn, &id, &reverted_by));
             }
         }
     }
@@ -904,7 +1572,10 @@ fn do_upsert_project(
         })?;
     match existing {
         Some(mut p) => {
-            conn.execute("UPDATE projects SET last_seen = ?1 WHERE id = ?2", params![now, p.id])?;
+            conn.execute(
+                "UPDATE projects SET last_seen = ?1 WHERE id = ?2",
+                params![now, p.id],
+            )?;
             p.last_seen = now;
             Ok(p)
         }
@@ -1021,8 +1692,12 @@ fn do_recent_observations(
         ))
     };
     let rows: Vec<_> = match kind {
-        Some(k) => stmt.query_map(params![limit, k], map)?.collect::<Result<_, _>>()?,
-        None => stmt.query_map(params![limit], map)?.collect::<Result<_, _>>()?,
+        Some(k) => stmt
+            .query_map(params![limit, k], map)?
+            .collect::<Result<_, _>>()?,
+        None => stmt
+            .query_map(params![limit], map)?
+            .collect::<Result<_, _>>()?,
     };
     let mut out = Vec::with_capacity(rows.len());
     for (id, event_id, ts, kind, project_id, content, meta) in rows {
@@ -1043,7 +1718,14 @@ fn do_session_open(conn: &Connection, ws: &WorkSession) -> Result<(), StoreError
     conn.execute(
         "INSERT INTO work_sessions (id, project_id, started, last_activity, ended, commands)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![ws.id, ws.project_id, ws.started, ws.last_activity, ws.ended, ws.commands],
+        params![
+            ws.id,
+            ws.project_id,
+            ws.started,
+            ws.last_activity,
+            ws.ended,
+            ws.commands
+        ],
     )?;
     Ok(())
 }
@@ -1062,7 +1744,10 @@ fn do_session_touch(
 }
 
 fn do_session_close(conn: &Connection, id: &str, ended: i64) -> Result<(), StoreError> {
-    conn.execute("UPDATE work_sessions SET ended = ?2 WHERE id = ?1", params![id, ended])?;
+    conn.execute(
+        "UPDATE work_sessions SET ended = ?2 WHERE id = ?1",
+        params![id, ended],
+    )?;
     Ok(())
 }
 
@@ -1168,7 +1853,18 @@ fn do_count(conn: &Connection) -> Result<u64, StoreError> {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::type_complexity)]
-type MemoryRow = (String, String, Option<String>, String, String, f64, i64, i64, String, i64);
+type MemoryRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    f64,
+    i64,
+    i64,
+    String,
+    i64,
+);
 
 #[allow(clippy::type_complexity)]
 type PushbackRow = (
@@ -1204,7 +1900,18 @@ fn row_to_memory(r: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
 }
 
 fn tuple_to_memory(
-    (id, r#type, project_id, title, body, confidence, created, updated, source_event_ids_s, archived): MemoryRow,
+    (
+        id,
+        r#type,
+        project_id,
+        title,
+        body,
+        confidence,
+        created,
+        updated,
+        source_event_ids_s,
+        archived,
+    ): MemoryRow,
 ) -> Result<Memory, StoreError> {
     Ok(Memory {
         id,
@@ -1220,7 +1927,11 @@ fn tuple_to_memory(
     })
 }
 
-fn do_add_memory(conn: &Connection, clock: &dyn Clock, mem: NewMemory) -> Result<Memory, StoreError> {
+fn do_add_memory(
+    conn: &Connection,
+    clock: &dyn Clock,
+    mem: NewMemory,
+) -> Result<Memory, StoreError> {
     let now = clock.now_ms();
     let m = Memory {
         id: new_id(),
@@ -1249,7 +1960,12 @@ fn do_add_memory(conn: &Connection, clock: &dyn Clock, mem: NewMemory) -> Result
     Ok(m)
 }
 
-fn do_update_memory_confidence(conn: &Connection, clock: &dyn Clock, id: &str, confidence: f64) -> Result<(), StoreError> {
+fn do_update_memory_confidence(
+    conn: &Connection,
+    clock: &dyn Clock,
+    id: &str,
+    confidence: f64,
+) -> Result<(), StoreError> {
     let now = clock.now_ms();
     conn.execute(
         "UPDATE memories SET confidence = ?2, updated = ?3 WHERE id = ?1",
@@ -1300,12 +2016,19 @@ fn do_list_memories(conn: &Connection, filter: &MemoryFilter) -> Result<Vec<Memo
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows: Vec<_> = stmt
-        .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), row_to_memory)?
+        .query_map(
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            row_to_memory,
+        )?
         .collect::<Result<_, _>>()?;
     rows.into_iter().map(tuple_to_memory).collect()
 }
 
-fn do_fts_observations(conn: &Connection, query: &str, limit: u32) -> Result<Vec<String>, StoreError> {
+fn do_fts_observations(
+    conn: &Connection,
+    query: &str,
+    limit: u32,
+) -> Result<Vec<String>, StoreError> {
     // Join FTS results back to observations to get the real id; ORDER BY bm25 ASC is correct
     // because SQLite bm25() returns negative values (more negative = better match).
     let mut stmt = conn.prepare(
@@ -1334,11 +2057,20 @@ fn do_fts_memories(conn: &Connection, query: &str, limit: u32) -> Result<Vec<Str
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn do_unembedded_observations(conn: &Connection, kinds: &[String], limit: u32) -> Result<Vec<Observation>, StoreError> {
+fn do_unembedded_observations(
+    conn: &Connection,
+    kinds: &[String],
+    limit: u32,
+) -> Result<Vec<Observation>, StoreError> {
     if kinds.is_empty() {
         return Ok(vec![]);
     }
-    let placeholders = kinds.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ");
+    let placeholders = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT o.id, o.event_id, o.ts, o.kind, o.project_id, o.content, o.meta
          FROM observations o
@@ -1383,7 +2115,11 @@ fn do_unembedded_observations(conn: &Connection, kinds: &[String], limit: u32) -
     Ok(out)
 }
 
-fn do_set_observation_embedding(conn: &Connection, obs_id: &str, embedding: &[f32]) -> Result<(), StoreError> {
+fn do_set_observation_embedding(
+    conn: &Connection,
+    obs_id: &str,
+    embedding: &[f32],
+) -> Result<(), StoreError> {
     let blob = encode_embedding(embedding);
     conn.execute(
         "INSERT INTO vec_observations (obs_id, embedding) VALUES (?1, ?2)
@@ -1393,7 +2129,11 @@ fn do_set_observation_embedding(conn: &Connection, obs_id: &str, embedding: &[f3
     Ok(())
 }
 
-fn do_set_memory_embedding(conn: &Connection, memory_id: &str, embedding: &[f32]) -> Result<(), StoreError> {
+fn do_set_memory_embedding(
+    conn: &Connection,
+    memory_id: &str,
+    embedding: &[f32],
+) -> Result<(), StoreError> {
     let blob = encode_embedding(embedding);
     conn.execute(
         "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)
@@ -1403,7 +2143,10 @@ fn do_set_memory_embedding(conn: &Connection, memory_id: &str, embedding: &[f32]
     Ok(())
 }
 
-fn do_all_observation_embeddings(conn: &Connection, limit: u32) -> Result<Vec<(String, Vec<f32>)>, StoreError> {
+fn do_all_observation_embeddings(
+    conn: &Connection,
+    limit: u32,
+) -> Result<Vec<(String, Vec<f32>)>, StoreError> {
     let mut stmt = conn.prepare("SELECT obs_id, embedding FROM vec_observations LIMIT ?1")?;
     let rows = stmt.query_map(params![limit], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
@@ -1416,7 +2159,10 @@ fn do_all_observation_embeddings(conn: &Connection, limit: u32) -> Result<Vec<(S
     Ok(out)
 }
 
-fn do_all_memory_embeddings(conn: &Connection, limit: u32) -> Result<Vec<(String, Vec<f32>)>, StoreError> {
+fn do_all_memory_embeddings(
+    conn: &Connection,
+    limit: u32,
+) -> Result<Vec<(String, Vec<f32>)>, StoreError> {
     let mut stmt = conn.prepare("SELECT memory_id, embedding FROM vec_memories LIMIT ?1")?;
     let rows = stmt.query_map(params![limit], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
@@ -1429,30 +2175,35 @@ fn do_all_memory_embeddings(conn: &Connection, limit: u32) -> Result<Vec<(String
     Ok(out)
 }
 
-fn do_observations_by_ids(conn: &Connection, ids: &[String]) -> Result<Vec<Observation>, StoreError> {
+fn do_observations_by_ids(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<Vec<Observation>, StoreError> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
-    let placeholders = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect::<Vec<_>>().join(", ");
+    let placeholders = ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT id, event_id, ts, kind, project_id, content, meta FROM observations WHERE id IN ({})",
         placeholders
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params_from_iter(ids.iter()),
-        |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, Option<String>>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, String>(6)?,
-            ))
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+        ))
+    })?;
     let mut out = Vec::new();
     for row in rows {
         let (id, event_id, ts, kind, project_id, content, meta) = row?;
@@ -1507,7 +2258,11 @@ fn tuple_to_pushback(t: PushbackRow) -> Result<Pushback, StoreError> {
     })
 }
 
-fn do_insert_pushback(conn: &Connection, clock: &dyn Clock, pb: NewPushback) -> Result<Pushback, StoreError> {
+fn do_insert_pushback(
+    conn: &Connection,
+    clock: &dyn Clock,
+    pb: NewPushback,
+) -> Result<Pushback, StoreError> {
     let now = clock.now_ms();
     let p = Pushback {
         id: new_id(),
@@ -1530,10 +2285,20 @@ fn do_insert_pushback(conn: &Connection, clock: &dyn Clock, pb: NewPushback) -> 
                                 evidence, proposals, confidence, status, decided_at, latency_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
-            p.id, p.ts, p.mode, p.trigger, p.severity, p.title, p.message_en, p.message_pt,
+            p.id,
+            p.ts,
+            p.mode,
+            p.trigger,
+            p.severity,
+            p.title,
+            p.message_en,
+            p.message_pt,
             serde_json::to_string(&p.evidence)?,
             serde_json::to_string(&p.proposals)?,
-            p.confidence, p.status, p.decided_at, p.latency_ms
+            p.confidence,
+            p.status,
+            p.decided_at,
+            p.latency_ms
         ],
     )?;
     Ok(p)
@@ -1545,7 +2310,9 @@ fn do_recent_pushbacks(conn: &Connection, limit: u32) -> Result<Vec<Pushback>, S
                 evidence, proposals, confidence, status, decided_at, latency_ms
          FROM pushbacks ORDER BY ts DESC LIMIT ?1",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![limit], row_to_pushback)?.collect::<Result<_, _>>()?;
+    let rows: Vec<_> = stmt
+        .query_map(params![limit], row_to_pushback)?
+        .collect::<Result<_, _>>()?;
     rows.into_iter().map(tuple_to_pushback).collect()
 }
 
@@ -1564,7 +2331,13 @@ fn do_get_pushback(conn: &Connection, id: &str) -> Result<Option<Pushback>, Stor
     }
 }
 
-fn do_pushback_feedback(conn: &Connection, id: &str, status: &str, decided_at: i64, latency_ms: i64) -> Result<(), StoreError> {
+fn do_pushback_feedback(
+    conn: &Connection,
+    id: &str,
+    status: &str,
+    decided_at: i64,
+    latency_ms: i64,
+) -> Result<(), StoreError> {
     conn.execute(
         "UPDATE pushbacks SET status = ?2, decided_at = ?3, latency_ms = ?4 WHERE id = ?1",
         params![id, status, decided_at, latency_ms],
@@ -1578,7 +2351,9 @@ fn do_pushbacks_since(conn: &Connection, ts: i64) -> Result<Vec<Pushback>, Store
                 evidence, proposals, confidence, status, decided_at, latency_ms
          FROM pushbacks WHERE ts >= ?1 ORDER BY ts ASC",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![ts], row_to_pushback)?.collect::<Result<_, _>>()?;
+    let rows: Vec<_> = stmt
+        .query_map(params![ts], row_to_pushback)?
+        .collect::<Result<_, _>>()?;
     rows.into_iter().map(tuple_to_pushback).collect()
 }
 
@@ -1619,7 +2394,11 @@ fn do_insert_disclosure(
         "INSERT INTO disclosures (id, ts, api_call_id, model, purpose, memory_ids, observation_ids)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
-            id, now, api_call_id, model, purpose,
+            id,
+            now,
+            api_call_id,
+            model,
+            purpose,
             serde_json::to_string(memory_ids)?,
             serde_json::to_string(observation_ids)?
         ],
@@ -1627,7 +2406,43 @@ fn do_insert_disclosure(
     Ok(id)
 }
 
-fn do_closed_sessions_without_summary(conn: &Connection, limit: u32) -> Result<Vec<WorkSession>, StoreError> {
+fn do_recent_disclosures(conn: &Connection, limit: u32) -> Result<Vec<Disclosure>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, ts, api_call_id, model, purpose, memory_ids, observation_ids
+         FROM disclosures
+         ORDER BY ts DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+        ))
+    })?;
+    rows.map(|row| {
+        let (id, ts, api_call_id, model, purpose, memory_ids, observation_ids) = row?;
+        Ok(Disclosure {
+            id,
+            ts,
+            api_call_id,
+            model,
+            purpose,
+            memory_ids: serde_json::from_str(&memory_ids)?,
+            observation_ids: serde_json::from_str(&observation_ids)?,
+        })
+    })
+    .collect()
+}
+
+fn do_closed_sessions_without_summary(
+    conn: &Connection,
+    limit: u32,
+) -> Result<Vec<WorkSession>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT id, project_id, started, last_activity, ended, commands
          FROM work_sessions
@@ -1635,16 +2450,18 @@ fn do_closed_sessions_without_summary(conn: &Connection, limit: u32) -> Result<V
          ORDER BY ended ASC
          LIMIT ?1",
     )?;
-    let rows: Vec<_> = stmt.query_map(params![limit], |r| {
-        Ok(WorkSession {
-            id: r.get(0)?,
-            project_id: r.get(1)?,
-            started: r.get(2)?,
-            last_activity: r.get(3)?,
-            ended: r.get(4)?,
-            commands: r.get(5)?,
-        })
-    })?.collect::<Result<_, _>>()?;
+    let rows: Vec<_> = stmt
+        .query_map(params![limit], |r| {
+            Ok(WorkSession {
+                id: r.get(0)?,
+                project_id: r.get(1)?,
+                started: r.get(2)?,
+                last_activity: r.get(3)?,
+                ended: r.get(4)?,
+                commands: r.get(5)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
     Ok(rows)
 }
 
@@ -1720,10 +2537,8 @@ fn do_delete_observations_older_than(
         "SELECT id FROM observations WHERE ts < ?1 {} LIMIT ?2",
         placeholders
     );
-    let mut select_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
-        Box::new(cutoff_ms),
-        Box::new(max_rows),
-    ];
+    let mut select_params: Vec<Box<dyn rusqlite::ToSql>> =
+        vec![Box::new(cutoff_ms), Box::new(max_rows)];
     for id in protected_ids {
         select_params.push(Box::new(id.clone()));
     }
@@ -1744,7 +2559,10 @@ fn do_delete_observations_older_than(
 
     // Delete vec_observations first
     for id in &ids_to_delete {
-        conn.execute("DELETE FROM vec_observations WHERE obs_id = ?1", params![id])?;
+        conn.execute(
+            "DELETE FROM vec_observations WHERE obs_id = ?1",
+            params![id],
+        )?;
     }
 
     // Delete the observations (FTS goes via trigger)
@@ -1755,10 +2573,36 @@ fn do_delete_observations_older_than(
         .collect::<Vec<_>>()
         .join(", ");
     let del_sql = format!("DELETE FROM observations WHERE id IN ({})", del_phs);
-    conn.execute(
-        &del_sql,
-        rusqlite::params_from_iter(ids_to_delete.iter()),
-    )?;
+    conn.execute(&del_sql, rusqlite::params_from_iter(ids_to_delete.iter()))?;
+
+    Ok(count)
+}
+
+/// Delete `api_calls` rows with `ts < cutoff_ms`, at most `max_rows` per call.
+/// Returns the number of rows deleted.
+fn do_delete_api_calls_older_than(
+    conn: &Connection,
+    cutoff_ms: i64,
+    max_rows: u32,
+) -> Result<u32, StoreError> {
+    let mut stmt = conn.prepare("SELECT id FROM api_calls WHERE ts < ?1 LIMIT ?2")?;
+    let ids_to_delete: Vec<String> = stmt
+        .query_map(params![cutoff_ms, max_rows], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+
+    if ids_to_delete.is_empty() {
+        return Ok(0);
+    }
+
+    let count = ids_to_delete.len() as u32;
+    let phs = ids_to_delete
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let del_sql = format!("DELETE FROM api_calls WHERE id IN ({})", phs);
+    conn.execute(&del_sql, rusqlite::params_from_iter(ids_to_delete.iter()))?;
 
     Ok(count)
 }
@@ -1791,9 +2635,23 @@ fn row_to_approval(r: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRow> {
 
 #[allow(clippy::type_complexity)]
 type ApprovalRow = (
-    String, i64, String, i64, String, String,
-    Option<String>, Option<String>, String, String, String, i64, String,
-    Option<i64>, Option<String>, Option<String>, Option<String>,
+    String,
+    i64,
+    String,
+    i64,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 fn tuple_to_approval(t: ApprovalRow) -> Result<Approval, StoreError> {
@@ -1854,19 +2712,36 @@ fn do_insert_approval(
                                 status, decided_at, decided_via, decision_note, execution)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
-            a.id, a.created, a.kind, a.risk, a.title, a.reason, a.cwd, a.target,
+            a.id,
+            a.created,
+            a.kind,
+            a.risk,
+            a.title,
+            a.reason,
+            a.cwd,
+            a.target,
             a.agent_identity,
             serde_json::to_string(&a.payload)?,
             serde_json::to_string(&a.expected_impact)?,
-            a.expires_at, a.status, a.decided_at, a.decided_via, a.decision_note,
-            a.execution.as_ref().map(serde_json::to_string).transpose()?
+            a.expires_at,
+            a.status,
+            a.decided_at,
+            a.decided_via,
+            a.decision_note,
+            a.execution
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?
         ],
     )?;
     Ok(a)
 }
 
 fn do_pending_approvals(conn: &Connection) -> Result<Vec<Approval>, StoreError> {
-    let sql = format!("{} WHERE status = 'pending' ORDER BY created ASC", APPROVAL_SELECT);
+    let sql = format!(
+        "{} WHERE status = 'pending' ORDER BY created ASC",
+        APPROVAL_SELECT
+    );
     let mut stmt = conn.prepare(&sql)?;
     let rows: Vec<ApprovalRow> = stmt
         .query_map([], row_to_approval)?
@@ -1892,8 +2767,7 @@ fn do_decide_approval(
     note: Option<&str>,
 ) -> Result<Approval, StoreError> {
     // Fetch current row — must exist and must be pending
-    let current = do_get_approval(conn, id)?
-        .ok_or(StoreError::NotFound)?;
+    let current = do_get_approval(conn, id)?.ok_or(StoreError::NotFound)?;
     if current.status != "pending" {
         return Err(StoreError::InvalidState(format!(
             "approval {} is '{}', not 'pending'; cannot decide",
@@ -1936,8 +2810,21 @@ fn do_expire_approvals(conn: &Connection, now_ms: i64) -> Result<u32, StoreError
 
 #[allow(clippy::type_complexity)]
 type AgentRunRow = (
-    String, String, String, String, String, String, Option<String>,
-    String, String, String, f64, i64, Option<i64>, Option<String>, Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    f64,
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
 );
 
 fn row_to_agent_run(r: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRunRow> {
@@ -2009,10 +2896,20 @@ fn do_insert_agent_run(conn: &Connection, run: NewAgentRun) -> Result<AgentRun, 
                                   result_summary, diffstat)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
-            r.id, r.adapter, r.task_title, r.project_id, r.worktree_path, r.branch,
-            r.tmux_target, r.mode, r.status,
+            r.id,
+            r.adapter,
+            r.task_title,
+            r.project_id,
+            r.worktree_path,
+            r.branch,
+            r.tmux_target,
+            r.mode,
+            r.status,
             serde_json::to_string(&r.tokens)?,
-            r.cost_usd, r.started, r.ended, r.result_summary,
+            r.cost_usd,
+            r.started,
+            r.ended,
+            r.result_summary,
             r.diffstat.as_ref().map(serde_json::to_string).transpose()?
         ],
     )?;
@@ -2031,7 +2928,10 @@ fn do_update_agent_run_status(
         "UPDATE agent_runs SET status = ?2, ended = ?3, result_summary = ?4, diffstat = ?5
          WHERE id = ?1",
         params![
-            id, status, ended, result_summary,
+            id,
+            status,
+            ended,
+            result_summary,
             diffstat.map(serde_json::to_string).transpose()?
         ],
     )?;
@@ -2124,7 +3024,16 @@ fn do_get_blob(conn: &Connection, id: &str) -> Result<Option<Blob>, StoreError> 
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::type_complexity)]
-type PinRow = (String, String, String, String, i64, Option<i64>, String, String);
+type PinRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<i64>,
+    String,
+    String,
+);
 
 fn row_to_pin(r: &rusqlite::Row<'_>) -> rusqlite::Result<PinRow> {
     Ok((
@@ -2175,7 +3084,13 @@ fn do_insert_pin(
         "INSERT INTO pins (id, kind, media, path, created, expires_at, reason, meta)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
-            p.id, p.kind, p.media, p.path, p.created, p.expires_at, p.reason,
+            p.id,
+            p.kind,
+            p.media,
+            p.path,
+            p.created,
+            p.expires_at,
+            p.reason,
             serde_json::to_string(&p.meta)?
         ],
     )?;
@@ -2207,8 +3122,13 @@ fn do_expire_pins(conn: &Connection, now_ms: i64) -> Result<Vec<Pin>, StoreError
         PIN_SELECT
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows: Vec<PinRow> = stmt.query_map(params![now_ms], row_to_pin)?.collect::<Result<_, _>>()?;
-    let pins: Vec<Pin> = rows.into_iter().map(tuple_to_pin).collect::<Result<_, _>>()?;
+    let rows: Vec<PinRow> = stmt
+        .query_map(params![now_ms], row_to_pin)?
+        .collect::<Result<_, _>>()?;
+    let pins: Vec<Pin> = rows
+        .into_iter()
+        .map(tuple_to_pin)
+        .collect::<Result<_, _>>()?;
     if !pins.is_empty() {
         conn.execute(
             "DELETE FROM pins WHERE expires_at IS NOT NULL AND expires_at <= ?1",
@@ -2221,6 +3141,328 @@ fn do_expire_pins(conn: &Connection, now_ms: i64) -> Result<Vec<Pin>, StoreError
 fn do_delete_pin(conn: &Connection, id: &str) -> Result<(), StoreError> {
     conn.execute("DELETE FROM pins WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+/// Read the single `retention_status` row (id="last"), if present.
+fn do_get_retention_status(conn: &Connection) -> Result<Option<RetentionStatus>, StoreError> {
+    match conn.query_row(
+        "SELECT last_run_ms, observations_deleted, pins_expired, api_calls_deleted
+         FROM retention_status WHERE id = 'last'",
+        [],
+        |r| {
+            Ok(RetentionStatus {
+                last_run_ms: r.get(0)?,
+                observations_deleted: r.get(1)?,
+                pins_expired: r.get(2)?,
+                api_calls_deleted: r.get(3)?,
+            })
+        },
+    ) {
+        Ok(status) => Ok(Some(status)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+/// Upsert the single `retention_status` row (id="last").
+fn do_set_retention_status(conn: &Connection, status: RetentionStatus) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT INTO retention_status (id, last_run_ms, observations_deleted, pins_expired, api_calls_deleted)
+         VALUES ('last', ?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+            last_run_ms = excluded.last_run_ms,
+            observations_deleted = excluded.observations_deleted,
+            pins_expired = excluded.pins_expired,
+            api_calls_deleted = excluded.api_calls_deleted",
+        params![
+            status.last_run_ms,
+            status.observations_deleted,
+            status.pins_expired,
+            status.api_calls_deleted,
+        ],
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// v7 implementation functions — voice utterances
+// ---------------------------------------------------------------------------
+
+fn do_insert_voice_utterance(
+    conn: &Connection,
+    clock: &dyn Clock,
+    new_utterance: NewVoiceUtterance,
+) -> Result<VoiceUtterance, StoreError> {
+    let utterance = VoiceUtterance {
+        id: new_id(),
+        ts: clock.now_ms(),
+        lang: new_utterance.lang,
+        text: new_utterance.text,
+        intent: new_utterance.intent,
+        wake_word: new_utterance.wake_word,
+        handled: new_utterance.handled,
+    };
+    conn.execute(
+        "INSERT INTO voice_utterances (id, ts, lang, text, intent, wake_word, handled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            utterance.id,
+            utterance.ts,
+            utterance.lang,
+            utterance.text,
+            utterance.intent,
+            utterance.wake_word,
+            if utterance.handled { 1 } else { 0 },
+        ],
+    )?;
+    Ok(utterance)
+}
+
+fn do_recent_voice_utterances(
+    conn: &Connection,
+    limit: u32,
+) -> Result<Vec<VoiceUtterance>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, ts, lang, text, intent, wake_word, handled
+         FROM voice_utterances ORDER BY ts DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit], |r| {
+            Ok(VoiceUtterance {
+                id: r.get(0)?,
+                ts: r.get(1)?,
+                lang: r.get(2)?,
+                text: r.get(3)?,
+                intent: r.get(4)?,
+                wake_word: r.get(5)?,
+                handled: r.get::<_, i64>(6)? != 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
+// v8 implementation functions — terminals + dotfile edits
+// ---------------------------------------------------------------------------
+
+fn row_to_terminal(r: &rusqlite::Row<'_>) -> rusqlite::Result<Terminal> {
+    let meta: String = r.get(10)?;
+    Ok(Terminal {
+        id: r.get(0)?,
+        tty: r.get(1)?,
+        pid: r.get(2)?,
+        emulator: r.get(3)?,
+        tmux_target: r.get(4)?,
+        role: r.get(5)?,
+        project_id: r.get(6)?,
+        cmd_hash: r.get(7)?,
+        first_seen: r.get(8)?,
+        last_seen: r.get(9)?,
+        meta: serde_json::from_str(&meta).unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn do_upsert_terminal(
+    conn: &Connection,
+    clock: &dyn Clock,
+    terminal: NewTerminal,
+) -> Result<Terminal, StoreError> {
+    let now = clock.now_ms();
+    let existing = conn
+        .query_row(
+            "SELECT id, tty, pid, emulator, tmux_target, role, project_id, cmd_hash, first_seen, last_seen, meta
+             FROM terminals WHERE tty = ?1 AND cmd_hash = ?2",
+            params![terminal.tty, terminal.cmd_hash],
+            row_to_terminal,
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    if let Some(mut existing) = existing {
+        conn.execute(
+            "UPDATE terminals
+             SET pid = ?2, emulator = ?3, tmux_target = ?4, role = ?5, project_id = ?6,
+                 last_seen = ?7, meta = ?8
+             WHERE id = ?1",
+            params![
+                existing.id,
+                terminal.pid,
+                terminal.emulator,
+                terminal.tmux_target,
+                terminal.role,
+                terminal.project_id,
+                now,
+                serde_json::to_string(&terminal.meta)?,
+            ],
+        )?;
+        existing.pid = terminal.pid;
+        existing.emulator = terminal.emulator;
+        existing.tmux_target = terminal.tmux_target;
+        existing.role = terminal.role;
+        existing.project_id = terminal.project_id;
+        existing.last_seen = now;
+        existing.meta = terminal.meta;
+        return Ok(existing);
+    }
+
+    let row = Terminal {
+        id: new_id(),
+        tty: terminal.tty,
+        pid: terminal.pid,
+        emulator: terminal.emulator,
+        tmux_target: terminal.tmux_target,
+        role: terminal.role,
+        project_id: terminal.project_id,
+        cmd_hash: terminal.cmd_hash,
+        first_seen: now,
+        last_seen: now,
+        meta: terminal.meta,
+    };
+    conn.execute(
+        "INSERT INTO terminals
+         (id, tty, pid, emulator, tmux_target, role, project_id, cmd_hash, first_seen, last_seen, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            row.id,
+            row.tty,
+            row.pid,
+            row.emulator,
+            row.tmux_target,
+            row.role,
+            row.project_id,
+            row.cmd_hash,
+            row.first_seen,
+            row.last_seen,
+            serde_json::to_string(&row.meta)?,
+        ],
+    )?;
+    Ok(row)
+}
+
+fn do_list_terminals(conn: &Connection) -> Result<Vec<Terminal>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, tty, pid, emulator, tmux_target, role, project_id, cmd_hash, first_seen, last_seen, meta
+         FROM terminals ORDER BY last_seen DESC",
+    )?;
+    let rows = stmt.query_map([], row_to_terminal)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn do_get_terminal(conn: &Connection, id: &str) -> Result<Option<Terminal>, StoreError> {
+    let result = conn.query_row(
+        "SELECT id, tty, pid, emulator, tmux_target, role, project_id, cmd_hash, first_seen, last_seen, meta
+         FROM terminals WHERE id = ?1",
+        params![id],
+        row_to_terminal,
+    );
+    match result {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+fn row_to_dotfile_edit(r: &rusqlite::Row<'_>) -> rusqlite::Result<DotfileEdit> {
+    let meta: String = r.get(12)?;
+    Ok(DotfileEdit {
+        id: r.get(0)?,
+        path: r.get(1)?,
+        kind: r.get(2)?,
+        before_blob: r.get(3)?,
+        after_blob: r.get(4)?,
+        diff: r.get(5)?,
+        reason: r.get(6)?,
+        source: r.get(7)?,
+        risk: r.get(8)?,
+        created: r.get(9)?,
+        applied: r.get::<_, i64>(10)? != 0,
+        reverted_by: r.get(11)?,
+        meta: serde_json::from_str(&meta).unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn do_insert_dotfile_edit(
+    conn: &Connection,
+    clock: &dyn Clock,
+    edit: NewDotfileEdit,
+) -> Result<DotfileEdit, StoreError> {
+    let row = DotfileEdit {
+        id: new_id(),
+        path: edit.path,
+        kind: edit.kind,
+        before_blob: edit.before_blob,
+        after_blob: edit.after_blob,
+        diff: edit.diff,
+        reason: edit.reason,
+        source: edit.source,
+        risk: edit.risk,
+        created: clock.now_ms(),
+        applied: edit.applied,
+        reverted_by: None,
+        meta: edit.meta,
+    };
+    conn.execute(
+        "INSERT INTO dotfile_edits
+         (id, path, kind, before_blob, after_blob, diff, reason, source, risk, created, applied, reverted_by, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            row.id,
+            row.path,
+            row.kind,
+            row.before_blob,
+            row.after_blob,
+            row.diff,
+            row.reason,
+            row.source,
+            row.risk,
+            row.created,
+            if row.applied { 1 } else { 0 },
+            row.reverted_by,
+            serde_json::to_string(&row.meta)?,
+        ],
+    )?;
+    Ok(row)
+}
+
+fn do_recent_dotfile_edits(conn: &Connection, limit: u32) -> Result<Vec<DotfileEdit>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, path, kind, before_blob, after_blob, diff, reason, source, risk, created, applied, reverted_by, meta
+         FROM dotfile_edits ORDER BY created DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], row_to_dotfile_edit)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn do_get_dotfile_edit(conn: &Connection, id: &str) -> Result<Option<DotfileEdit>, StoreError> {
+    let result = conn.query_row(
+        "SELECT id, path, kind, before_blob, after_blob, diff, reason, source, risk, created, applied, reverted_by, meta
+         FROM dotfile_edits WHERE id = ?1",
+        params![id],
+        row_to_dotfile_edit,
+    );
+    match result {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+fn do_mark_dotfile_edit_reverted(
+    conn: &Connection,
+    id: &str,
+    reverted_by: &str,
+) -> Result<DotfileEdit, StoreError> {
+    let changed = conn.execute(
+        "UPDATE dotfile_edits SET reverted_by = ?2 WHERE id = ?1",
+        params![id, reverted_by],
+    )?;
+    if changed == 0 {
+        return Err(StoreError::NotFound);
+    }
+    do_get_dotfile_edit(conn, id)?.ok_or(StoreError::NotFound)
 }
 
 /// Compute the SHA-256 digest of `data` and return it as a 64-char hex string.
@@ -2241,7 +3483,11 @@ mod tests {
     use rat_proto::NewEvent;
 
     fn ev(kind: &str) -> NewEvent {
-        NewEvent { kind: kind.into(), source: "test".into(), ..Default::default() }
+        NewEvent {
+            kind: kind.into(),
+            source: "test".into(),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
@@ -2286,9 +3532,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clock = FakeClock::at(100);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
-        let a = store.upsert_project("/home/u/proj".into(), "proj".into()).await.unwrap();
+        let a = store
+            .upsert_project("/home/u/proj".into(), "proj".into())
+            .await
+            .unwrap();
         clock.advance(50);
-        let b = store.upsert_project("/home/u/proj".into(), "proj".into()).await.unwrap();
+        let b = store
+            .upsert_project("/home/u/proj".into(), "proj".into())
+            .await
+            .unwrap();
         assert_eq!(a.id, b.id);
         assert_eq!(b.first_seen, 100);
         assert_eq!(b.last_seen, 150);
@@ -2341,7 +3593,10 @@ mod tests {
             .unwrap();
         let all = store.recent_observations(10, None).await.unwrap();
         assert_eq!(all.len(), 2);
-        let shell = store.recent_observations(10, Some("shell_cmd".into())).await.unwrap();
+        let shell = store
+            .recent_observations(10, Some("shell_cmd".into()))
+            .await
+            .unwrap();
         assert_eq!(shell.len(), 1);
         assert_eq!(shell[0].content, "cargo test");
         assert_eq!(shell[0].meta["exit"], 0);
@@ -2403,7 +3658,10 @@ mod tests {
         assert!(non_archived.is_empty());
 
         let with_archived = store
-            .list_memories(crate::rows::MemoryFilter { include_archived: true, ..Default::default() })
+            .list_memories(crate::rows::MemoryFilter {
+                include_archived: true,
+                ..Default::default()
+            })
             .await
             .unwrap();
         assert_eq!(with_archived.len(), 1);
@@ -2462,7 +3720,10 @@ mod tests {
             .unwrap();
 
         let embedding: Vec<f32> = vec![0.1, 0.2, -0.3, 1.0];
-        store.set_observation_embedding(obs.id.clone(), embedding.clone()).await.unwrap();
+        store
+            .set_observation_embedding(obs.id.clone(), embedding.clone())
+            .await
+            .unwrap();
 
         let all = store.all_observation_embeddings(10).await.unwrap();
         assert_eq!(all.len(), 1);
@@ -2500,7 +3761,10 @@ mod tests {
         assert_eq!(unembedded.len(), 1);
 
         // Set embedding, now it should not appear
-        store.set_observation_embedding(obs1.id.clone(), vec![1.0, 0.0]).await.unwrap();
+        store
+            .set_observation_embedding(obs1.id.clone(), vec![1.0, 0.0])
+            .await
+            .unwrap();
         let unembedded2 = store
             .unembedded_observations(vec!["shell_cmd".into()], 10)
             .await
@@ -2579,7 +3843,10 @@ mod tests {
         assert_eq!(without[0].id, "s1");
 
         // set summary
-        store.set_session_summary("s1".into(), "Did some work".into()).await.unwrap();
+        store
+            .set_session_summary("s1".into(), "Did some work".into())
+            .await
+            .unwrap();
 
         let after = store.closed_sessions_without_summary(10).await.unwrap();
         assert!(after.is_empty());
@@ -2624,37 +3891,52 @@ mod tests {
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
         // obs at t=1000
-        store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cmd at 1000".into(),
-            project_id: Some("p1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cmd at 1000".into(),
+                project_id: Some("p1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         clock.advance(2_000); // t=3000
-        store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cmd at 3000".into(),
-            project_id: Some("p1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cmd at 3000".into(),
+                project_id: Some("p1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         clock.advance(2_000); // t=5000
-        store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "cmd at 5000".into(),
-            project_id: Some("p1".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "cmd at 5000".into(),
+                project_id: Some("p1".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Between 500 and 4000 → should return 2
-        let result = store.observations_between("p1", 500, 4000, 10).await.unwrap();
+        let result = store
+            .observations_between("p1", 500, 4000, 10)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].content, "cmd at 1000");
         assert_eq!(result[1].content, "cmd at 3000");
 
         // Different project → none
-        let result2 = store.observations_between("other", 0, 10_000, 10).await.unwrap();
+        let result2 = store
+            .observations_between("other", 0, 10_000, 10)
+            .await
+            .unwrap();
         assert!(result2.is_empty());
     }
 
@@ -2664,27 +3946,39 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let obs_old = store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "old cmd".into(),
-            ..Default::default()
-        }).await.unwrap();
+        let obs_old = store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "old cmd".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
-        let obs_protected = store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "protected old cmd".into(),
-            ..Default::default()
-        }).await.unwrap();
+        let obs_protected = store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "protected old cmd".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         clock.advance(10_000);
-        let obs_new = store.add_observation(rat_proto::NewObservation {
-            kind: "shell_cmd".into(),
-            content: "new cmd".into(),
-            ..Default::default()
-        }).await.unwrap();
+        let obs_new = store
+            .add_observation(rat_proto::NewObservation {
+                kind: "shell_cmd".into(),
+                content: "new cmd".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // Store an embedding for obs_old to verify vec cleanup
-        store.set_observation_embedding(obs_old.id.clone(), vec![1.0, 0.0]).await.unwrap();
+        store
+            .set_observation_embedding(obs_old.id.clone(), vec![1.0, 0.0])
+            .await
+            .unwrap();
 
         // Delete older than t=5000, protecting obs_protected
         let deleted = store
@@ -2729,7 +4023,10 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        let a = store
+            .insert_approval(new_approval_fixture(9_000))
+            .await
+            .unwrap();
         assert_eq!(a.status, "pending");
         assert_eq!(a.created, 1_000);
         assert_eq!(a.kind, "command");
@@ -2750,7 +4047,10 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        let a = store
+            .insert_approval(new_approval_fixture(9_000))
+            .await
+            .unwrap();
 
         // Approve it
         clock.advance(500);
@@ -2773,7 +4073,10 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        let a = store
+            .insert_approval(new_approval_fixture(9_000))
+            .await
+            .unwrap();
 
         // First decide: approved
         store
@@ -2785,7 +4088,10 @@ mod tests {
         let err = store
             .decide_approval(a.id.clone(), "denied".into(), 1_002, "popup".into(), None)
             .await;
-        assert!(err.is_err(), "deciding a non-pending approval must return an error");
+        assert!(
+            err.is_err(),
+            "deciding a non-pending approval must return an error"
+        );
         match err.unwrap_err() {
             crate::error::StoreError::InvalidState(_) => {}
             other => panic!("expected InvalidState, got: {other:?}"),
@@ -2799,9 +4105,15 @@ mod tests {
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
         // expires_at = 2_000; now = 1_000 → not yet expired
-        let _a1 = store.insert_approval(new_approval_fixture(2_000)).await.unwrap();
+        let _a1 = store
+            .insert_approval(new_approval_fixture(2_000))
+            .await
+            .unwrap();
         // expires_at = 500; now = 1_000 → should expire
-        let a2 = store.insert_approval(new_approval_fixture(500)).await.unwrap();
+        let a2 = store
+            .insert_approval(new_approval_fixture(500))
+            .await
+            .unwrap();
 
         let expired_count = store.expire_approvals(1_000).await.unwrap();
         assert_eq!(expired_count, 1);
@@ -2820,14 +4132,26 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let a = store.insert_approval(new_approval_fixture(9_000)).await.unwrap();
+        let a = store
+            .insert_approval(new_approval_fixture(9_000))
+            .await
+            .unwrap();
         store
-            .decide_approval(a.id.clone(), "approved".into(), 1_001, "cli".into(), Some("auto".into()))
+            .decide_approval(
+                a.id.clone(),
+                "approved".into(),
+                1_001,
+                "cli".into(),
+                Some("auto".into()),
+            )
             .await
             .unwrap();
 
         let exec = serde_json::json!({"started": 1_100, "exit_code": 0, "output_ref": null});
-        store.set_approval_execution(a.id.clone(), exec.clone()).await.unwrap();
+        store
+            .set_approval_execution(a.id.clone(), exec.clone())
+            .await
+            .unwrap();
 
         let got = store.get_approval(a.id.clone()).await.unwrap().unwrap();
         assert!(got.execution.is_some());
@@ -2858,7 +4182,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(5_000)).unwrap();
 
-        let run = store.insert_agent_run(new_run_fixture(5_000)).await.unwrap();
+        let run = store
+            .insert_agent_run(new_run_fixture(5_000))
+            .await
+            .unwrap();
         assert_eq!(run.status, "running");
         assert_eq!(run.adapter, "test-adapter");
         assert_eq!(run.id.len(), 26);
@@ -2878,7 +4205,10 @@ mod tests {
         let got = store.get_agent_run(run.id.clone()).await.unwrap().unwrap();
         assert_eq!(got.status, "done");
         assert_eq!(got.ended, Some(6_000));
-        assert_eq!(got.result_summary.as_deref(), Some("Fixed the bug successfully"));
+        assert_eq!(
+            got.result_summary.as_deref(),
+            Some("Fixed the bug successfully")
+        );
         assert!(got.diffstat.is_some());
         assert_eq!(got.diffstat.unwrap()["added"], 10);
     }
@@ -2888,9 +4218,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
 
-        store.insert_agent_run(new_run_fixture(1_000)).await.unwrap();
-        store.insert_agent_run(new_run_fixture(2_000)).await.unwrap();
-        store.insert_agent_run(new_run_fixture(3_000)).await.unwrap();
+        store
+            .insert_agent_run(new_run_fixture(1_000))
+            .await
+            .unwrap();
+        store
+            .insert_agent_run(new_run_fixture(2_000))
+            .await
+            .unwrap();
+        store
+            .insert_agent_run(new_run_fixture(3_000))
+            .await
+            .unwrap();
 
         let recent = store.recent_agent_runs(2).await.unwrap();
         assert_eq!(recent.len(), 2);
@@ -2941,7 +4280,10 @@ mod tests {
         // Must return the same id and sha256
         assert_eq!(b1.id, b2.id, "same content must deduplicate to same id");
         assert_eq!(b1.sha256, b2.sha256);
-        assert_eq!(b1.created, b2.created, "deduplicated blob should keep original created");
+        assert_eq!(
+            b1.created, b2.created,
+            "deduplicated blob should keep original created"
+        );
 
         // Only one row in db
         let got = store.get_blob(b1.id.clone()).await.unwrap().unwrap();
@@ -2953,8 +4295,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
 
-        let b1 = store.insert_blob(b"content-a".to_vec(), 1_000).await.unwrap();
-        let b2 = store.insert_blob(b"content-b".to_vec(), 1_000).await.unwrap();
+        let b1 = store
+            .insert_blob(b"content-a".to_vec(), 1_000)
+            .await
+            .unwrap();
+        let b2 = store
+            .insert_blob(b"content-b".to_vec(), 1_000)
+            .await
+            .unwrap();
         assert_ne!(b1.id, b2.id);
         assert_ne!(b1.sha256, b2.sha256);
     }
@@ -2988,7 +4336,10 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        let p = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+        let p = store
+            .insert_pin(new_pin_fixture("manual", None))
+            .await
+            .unwrap();
         assert_eq!(p.id.len(), 26);
         assert_eq!(p.kind, "manual");
         assert_eq!(p.media, "screen");
@@ -3012,9 +4363,15 @@ mod tests {
         let clock = FakeClock::at(1_000);
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
-        store.insert_pin(new_pin_fixture("auto", None)).await.unwrap();
+        store
+            .insert_pin(new_pin_fixture("auto", None))
+            .await
+            .unwrap();
         clock.advance(100);
-        let newer = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+        let newer = store
+            .insert_pin(new_pin_fixture("manual", None))
+            .await
+            .unwrap();
 
         let list = store.list_pins().await.unwrap();
         assert_eq!(list.len(), 2);
@@ -3036,27 +4393,36 @@ mod tests {
         let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
 
         // auto pin expired in the past
-        let past = store.insert_pin(NewPin {
-            kind: "auto".into(),
-            media: "screen".into(),
-            path: "/tmp/past.png".into(),
-            expires_at: Some(4_000),  // <= 5_000, will be expired
-            reason: "old capture".into(),
-            meta: serde_json::Value::Null,
-        }).await.unwrap();
+        let past = store
+            .insert_pin(NewPin {
+                kind: "auto".into(),
+                media: "screen".into(),
+                path: "/tmp/past.png".into(),
+                expires_at: Some(4_000), // <= 5_000, will be expired
+                reason: "old capture".into(),
+                meta: serde_json::Value::Null,
+            })
+            .await
+            .unwrap();
 
         // manual pin (no expires_at)
-        let manual = store.insert_pin(new_pin_fixture("manual", None)).await.unwrap();
+        let manual = store
+            .insert_pin(new_pin_fixture("manual", None))
+            .await
+            .unwrap();
 
         // auto pin that expires in the future
-        let future = store.insert_pin(NewPin {
-            kind: "auto".into(),
-            media: "audio".into(),
-            path: "/tmp/future.wav".into(),
-            expires_at: Some(9_000),  // > 5_000, should stay
-            reason: "future capture".into(),
-            meta: serde_json::Value::Null,
-        }).await.unwrap();
+        let future = store
+            .insert_pin(NewPin {
+                kind: "auto".into(),
+                media: "audio".into(),
+                path: "/tmp/future.wav".into(),
+                expires_at: Some(9_000), // > 5_000, should stay
+                reason: "future capture".into(),
+                meta: serde_json::Value::Null,
+            })
+            .await
+            .unwrap();
 
         // expire at now=5_000
         let expired = store.expire_pins(5_000).await.unwrap();
@@ -3076,8 +4442,304 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
 
-        let p = store.insert_pin(new_pin_fixture("auto", Some(9_999))).await.unwrap();
+        let p = store
+            .insert_pin(new_pin_fixture("auto", Some(9_999)))
+            .await
+            .unwrap();
         store.delete_pin(p.id.clone()).await.unwrap();
         assert!(store.get_pin(p.id).await.unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 tests — retention status + api_calls pruning
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn retention_status_none_until_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+        assert!(store.get_retention_status().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn retention_status_set_and_get_round_trips_and_upserts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("t.db"), FakeClock::at(1_000)).unwrap();
+
+        store
+            .set_retention_status(RetentionStatus {
+                last_run_ms: 1_000,
+                observations_deleted: 3,
+                pins_expired: 1,
+                api_calls_deleted: 2,
+            })
+            .await
+            .unwrap();
+
+        let got = store.get_retention_status().await.unwrap().unwrap();
+        assert_eq!(got.last_run_ms, 1_000);
+        assert_eq!(got.observations_deleted, 3);
+        assert_eq!(got.pins_expired, 1);
+        assert_eq!(got.api_calls_deleted, 2);
+
+        // Upsert: a second call replaces the row, not adds another.
+        store
+            .set_retention_status(RetentionStatus {
+                last_run_ms: 2_000,
+                observations_deleted: 5,
+                pins_expired: 0,
+                api_calls_deleted: 7,
+            })
+            .await
+            .unwrap();
+
+        let got2 = store.get_retention_status().await.unwrap().unwrap();
+        assert_eq!(got2.last_run_ms, 2_000);
+        assert_eq!(got2.observations_deleted, 5);
+        assert_eq!(got2.pins_expired, 0);
+        assert_eq!(got2.api_calls_deleted, 7);
+    }
+
+    #[tokio::test]
+    async fn delete_api_calls_older_than_prunes_old_keeps_new() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // old api_call at ts=1_000
+        store
+            .insert_api_call(
+                "gpt-4".into(),
+                "critic".into(),
+                Some(1),
+                Some(1),
+                Some(0.0),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // advance clock, insert a newer api_call
+        clock.advance(1_000);
+        store
+            .insert_api_call(
+                "gpt-4".into(),
+                "critic".into(),
+                Some(1),
+                Some(1),
+                Some(0.0),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // cutoff between the two: deletes the old one only
+        let deleted = store
+            .delete_api_calls_older_than(2_000, 5_000)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+
+        // A second call with the same cutoff finds nothing left to delete.
+        let deleted_again = store
+            .delete_api_calls_older_than(2_000, 5_000)
+            .await
+            .unwrap();
+        assert_eq!(deleted_again, 0);
+
+        // The newer call (ts=2_000) is not older than cutoff=2_000, so it survives.
+        let deleted_at_cutoff = store
+            .delete_api_calls_older_than(2_001, 5_000)
+            .await
+            .unwrap();
+        assert_eq!(deleted_at_cutoff, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_api_calls_older_than_batch_boundary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(1_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        // Insert 7 old api_calls at ts=1_000
+        for _ in 0..7 {
+            store
+                .insert_api_call(
+                    "gpt-4".into(),
+                    "critic".into(),
+                    Some(1),
+                    Some(1),
+                    Some(0.0),
+                    true,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // cutoff covers all 7, but max_rows=3 per call
+        let first = store.delete_api_calls_older_than(2_000, 3).await.unwrap();
+        assert_eq!(first, 3);
+        let second = store.delete_api_calls_older_than(2_000, 3).await.unwrap();
+        assert_eq!(second, 3);
+        let third = store.delete_api_calls_older_than(2_000, 3).await.unwrap();
+        assert_eq!(third, 1);
+        let fourth = store.delete_api_calls_older_than(2_000, 3).await.unwrap();
+        assert_eq!(fourth, 0);
+    }
+
+    #[tokio::test]
+    async fn voice_utterance_insert_and_recent_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(10_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let first = store
+            .insert_voice_utterance(NewVoiceUtterance {
+                lang: "en".into(),
+                text: "open dashboard".into(),
+                intent: Some("open_dashboard".into()),
+                wake_word: "hey rat".into(),
+                handled: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.ts, 10_000);
+        assert!(first.handled);
+
+        clock.advance(1_000);
+        store
+            .insert_voice_utterance(NewVoiceUtterance {
+                lang: "pt".into(),
+                text: "pina isso".into(),
+                intent: Some("pin_recent".into()),
+                wake_word: "ei rato".into(),
+                handled: false,
+            })
+            .await
+            .unwrap();
+
+        let recent = store.recent_voice_utterances(10).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].lang, "pt");
+        assert_eq!(recent[0].text, "pina isso");
+        assert!(!recent[0].handled);
+        assert_eq!(recent[1].id, first.id);
+    }
+
+    #[tokio::test]
+    async fn terminal_upsert_refreshes_last_seen_and_role() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(20_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let first = store
+            .upsert_terminal(NewTerminal {
+                tty: "/dev/pts/4".into(),
+                pid: 42,
+                emulator: "kitty".into(),
+                tmux_target: None,
+                role: "foreign".into(),
+                project_id: Some("proj1".into()),
+                cmd_hash: "hash-claude".into(),
+                meta: serde_json::json!({"cmd": "claude"}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.first_seen, 20_000);
+        assert_eq!(first.last_seen, 20_000);
+        assert_eq!(first.role, "foreign");
+
+        clock.advance(5_000);
+        let updated = store
+            .upsert_terminal(NewTerminal {
+                tty: "/dev/pts/4".into(),
+                pid: 43,
+                emulator: "kitty".into(),
+                tmux_target: Some("work:0.0".into()),
+                role: "operator".into(),
+                project_id: Some("proj1".into()),
+                cmd_hash: "hash-claude".into(),
+                meta: serde_json::json!({"cmd": "claude", "pane": true}),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(updated.id, first.id);
+        assert_eq!(updated.first_seen, 20_000);
+        assert_eq!(updated.last_seen, 25_000);
+        assert_eq!(updated.pid, 43);
+        assert_eq!(updated.role, "operator");
+        assert_eq!(updated.tmux_target.as_deref(), Some("work:0.0"));
+
+        let listed = store.list_terminals().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        let got = store.get_terminal(first.id).await.unwrap().unwrap();
+        assert_eq!(got.role, "operator");
+    }
+
+    #[tokio::test]
+    async fn dotfile_edit_round_trips_and_links_revert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(30_000);
+        let store = Store::open(&tmp.path().join("t.db"), clock.clone()).unwrap();
+
+        let before = store
+            .insert_blob(b"{\"old\":true}\n".to_vec(), 30_000)
+            .await
+            .unwrap();
+        let after = store
+            .insert_blob(b"{\"old\":false}\n".to_vec(), 30_001)
+            .await
+            .unwrap();
+        let edit = store
+            .insert_dotfile_edit(NewDotfileEdit {
+                path: "/home/me/.claude/settings.json".into(),
+                kind: "json".into(),
+                before_blob: before.id.clone(),
+                after_blob: after.id.clone(),
+                diff: "-old\n+new\n".into(),
+                reason: "enable MCP".into(),
+                source: "rat-dotfile".into(),
+                risk: 1,
+                applied: true,
+                meta: serde_json::json!({"mcp": true}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(edit.created, 30_000);
+        assert!(edit.applied);
+        assert!(edit.reverted_by.is_none());
+
+        clock.advance(1_000);
+        let revert = store
+            .insert_dotfile_edit(NewDotfileEdit {
+                path: edit.path.clone(),
+                kind: edit.kind.clone(),
+                before_blob: edit.after_blob.clone(),
+                after_blob: edit.before_blob.clone(),
+                diff: "+old\n-new\n".into(),
+                reason: "revert".into(),
+                source: "rat-dotfile".into(),
+                risk: 1,
+                applied: true,
+                meta: serde_json::json!({"revert_of": edit.id}),
+            })
+            .await
+            .unwrap();
+        let marked = store
+            .mark_dotfile_edit_reverted(edit.id.clone(), revert.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(marked.reverted_by.as_deref(), Some(revert.id.as_str()));
+
+        let recent = store.recent_dotfile_edits(10).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].id, revert.id);
+        let got = store.get_dotfile_edit(edit.id).await.unwrap().unwrap();
+        assert_eq!(got.before_blob, before.id);
+        assert_eq!(got.after_blob, after.id);
     }
 }

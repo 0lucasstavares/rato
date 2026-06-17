@@ -83,8 +83,11 @@ impl<S: ScreenSource, O: OcrEngine> CapturePipeline<S, O> {
             .join("\n");
 
         // Line-set delta: lines present now but not in the previous text.
-        let prev_lines: HashSet<&str> =
-            self.last_ocr_text.lines().filter(|l| !l.is_empty()).collect();
+        let prev_lines: HashSet<&str> = self
+            .last_ocr_text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .collect();
         let new_lines: Vec<&str> = full_text
             .lines()
             .filter(|l| !l.is_empty() && !prev_lines.contains(*l))
@@ -113,9 +116,8 @@ fn rgba_to_gray(frame: &Frame) -> GrayImage {
     let h = frame.height;
 
     // Build an Rgba image then convert to luma.
-    let rgba_img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(w, h, pixels.to_vec())
-            .unwrap_or_else(|| ImageBuffer::new(w.max(1), h.max(1)));
+    let rgba_img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, pixels.to_vec())
+        .unwrap_or_else(|| ImageBuffer::new(w.max(1), h.max(1)));
 
     DynamicImage::ImageRgba8(rgba_img).to_luma8()
 }
@@ -132,7 +134,8 @@ fn encode_jpeg(frame: &Frame, quality: u8) -> Vec<u8> {
     {
         use image::codecs::jpeg::JpegEncoder;
         let mut enc = JpegEncoder::new_with_quality(&mut buf, quality);
-        enc.encode_image(&DynamicImage::ImageRgb8(rgb)).expect("JPEG encode failed");
+        enc.encode_image(&DynamicImage::ImageRgb8(rgb))
+            .expect("JPEG encode failed");
     }
     buf
 }
@@ -146,7 +149,13 @@ mod tests {
     use crate::screen::{FakeScreenSource, Frame, ScreenResult, SourceHealth};
 
     fn make_frame(captured_ms: i64, rgba: Vec<u8>, w: u32, h: u32) -> Frame {
-        Frame { rgba, width: w, height: h, window_title: None, captured_ms }
+        Frame {
+            rgba,
+            width: w,
+            height: h,
+            window_title: None,
+            captured_ms,
+        }
     }
 
     /// Produce a solid-colour RGBA frame (w×h).
@@ -158,23 +167,30 @@ mod tests {
     /// Produce an RGBA frame that grades horizontally from (v,v,v) to (255,255,255).
     fn gradient_frame(captured_ms: i64, w: u32, h: u32) -> Frame {
         let rgba: Vec<u8> = (0..h)
-            .flat_map(|_| (0..w).flat_map(|x| {
-                let v = ((x * 255) / w.max(1)) as u8;
-                [v, v, v, 255u8]
-            }))
+            .flat_map(|_| {
+                (0..w).flat_map(|x| {
+                    let v = ((x * 255) / w.max(1)) as u8;
+                    [v, v, v, 255u8]
+                })
+            })
             .collect();
         make_frame(captured_ms, rgba, w, h)
     }
 
     fn block(text: &str) -> OcrBlock {
-        OcrBlock { text: text.to_string(), bbox: (0, 0, 100, 20) }
+        OcrBlock {
+            text: text.to_string(),
+            bbox: (0, 0, 100, 20),
+        }
     }
 
     // ── dedup behaviour ──────────────────────────────────────────────────────
 
     #[test]
     fn tick_returns_some_for_first_frame() {
-        let src = FakeScreenSource::new(vec![ScreenResult::Frame(solid_frame(1000, 100, 100, 100, 32, 32))]);
+        let src = FakeScreenSource::new(vec![ScreenResult::Frame(solid_frame(
+            1000, 100, 100, 100, 32, 32,
+        ))]);
         let mut pipe = CapturePipeline::new(src, NullOcr);
         assert!(pipe.tick().is_some());
     }
@@ -227,8 +243,7 @@ mod tests {
         let frame_a = solid_frame(1000, 10, 10, 10, 64, 64);
 
         // Near-dup of A: single corner pixel tweak on same solid colour.
-        let mut near_dup_rgba: Vec<u8> =
-            (0..64 * 64).flat_map(|_| [10u8, 10, 10, 255]).collect();
+        let mut near_dup_rgba: Vec<u8> = (0..64 * 64).flat_map(|_| [10u8, 10, 10, 255]).collect();
         near_dup_rgba[0] = 11; // imperceptible
         let frame_near = make_frame(2000, near_dup_rgba, 64, 64);
 

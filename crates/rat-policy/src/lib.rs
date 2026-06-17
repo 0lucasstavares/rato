@@ -114,7 +114,10 @@ mod tests {
             (ActionKind::DotfileEditManaged, RiskOutcome::Tier(Tier::R1)),
             (ActionKind::McpKnownEdit, RiskOutcome::Tier(Tier::R1)),
             // R2
-            (ActionKind::CommandOutsideWorktree, RiskOutcome::Tier(Tier::R2)),
+            (
+                ActionKind::CommandOutsideWorktree,
+                RiskOutcome::Tier(Tier::R2),
+            ),
             (ActionKind::TerminalInject, RiskOutcome::Tier(Tier::R2)),
             (ActionKind::MergeBack, RiskOutcome::Tier(Tier::R2)),
             (ActionKind::LiveRepoWrite, RiskOutcome::Tier(Tier::R2)),

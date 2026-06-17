@@ -32,7 +32,10 @@ pub fn read_head(root: &Path) -> Option<HeadState> {
         let commit = read_ref(&refs_base, refname)?;
         Some(HeadState { branch, commit })
     } else if head.len() >= 40 {
-        Some(HeadState { branch: None, commit: head.to_string() })
+        Some(HeadState {
+            branch: None,
+            commit: head.to_string(),
+        })
     } else {
         None
     }
@@ -78,7 +81,14 @@ mod tests {
         let status = Command::new("git")
             .arg("-C")
             .arg(dir)
-            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .status()
             .expect("git runs");

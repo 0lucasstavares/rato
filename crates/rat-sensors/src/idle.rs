@@ -19,19 +19,34 @@ impl IdleProbe {
     pub async fn connect() -> Self {
         let Ok(conn) = Connection::session().await else {
             tracing::warn!("no session D-Bus; idle detection falls back to sensor activity");
-            return Self { conn: None, backend: Backend::None };
+            return Self {
+                conn: None,
+                backend: Backend::None,
+            };
         };
-        let probe = Self { conn: Some(conn), backend: Backend::Mutter };
+        let probe = Self {
+            conn: Some(conn),
+            backend: Backend::Mutter,
+        };
         if probe.query(Backend::Mutter).await.is_some() {
             tracing::info!("idle probe: GNOME Mutter IdleMonitor");
-            return Self { backend: Backend::Mutter, ..probe };
+            return Self {
+                backend: Backend::Mutter,
+                ..probe
+            };
         }
         if probe.query(Backend::ScreenSaver).await.is_some() {
             tracing::info!("idle probe: org.freedesktop.ScreenSaver");
-            return Self { backend: Backend::ScreenSaver, ..probe };
+            return Self {
+                backend: Backend::ScreenSaver,
+                ..probe
+            };
         }
         tracing::warn!("no D-Bus idle interface; idle detection falls back to sensor activity");
-        Self { backend: Backend::None, ..probe }
+        Self {
+            backend: Backend::None,
+            ..probe
+        }
     }
 
     pub async fn idle_ms(&self) -> Option<i64> {

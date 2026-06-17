@@ -1,7 +1,7 @@
-use crate::error::LlmError;
-use crate::openai::OpenAiResponsesBackend;
 use crate::anthropic::AnthropicBackend;
 use crate::compat::OpenRouterBackend;
+use crate::error::LlmError;
+use crate::openai::OpenAiResponsesBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Provider {

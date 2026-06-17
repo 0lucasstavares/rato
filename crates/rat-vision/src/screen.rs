@@ -112,6 +112,9 @@ mod tests {
     fn fake_source_empty_returns_unavailable() {
         let mut src = FakeScreenSource::new(vec![]);
         assert!(matches!(src.grab(), ScreenResult::Unavailable));
-        assert_eq!(src.health(), SourceHealth::Unavailable("no scripted frames".to_string()));
+        assert_eq!(
+            src.health(),
+            SourceHealth::Unavailable("no scripted frames".to_string())
+        );
     }
 }

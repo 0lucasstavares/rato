@@ -2,14 +2,24 @@
   import { onDestroy, onMount } from "svelte";
   import HudPanel from "../../ui/hud/HudPanel.svelte";
   import MeterBar from "../../ui/hud/MeterBar.svelte";
+  import DialogueBox from "../../ui/hud/DialogueBox.svelte";
   import { fmtAgo, fmtDuration, poll, rpc } from "../../lib/rpc";
-  import type { Observation, Project, PushbackDto, StatusResult, WorkSession } from "../../lib/types";
+  import type {
+    Observation,
+    Project,
+    PushbackDto,
+    StatusResult,
+    TerminalDto,
+    WorkSession,
+  } from "../../lib/types";
 
   let status = $state<StatusResult | null>(null);
   let sessions = $state<WorkSession[]>([]);
   let observations = $state<Observation[]>([]);
   let projects = $state<Map<string, Project>>(new Map());
   let recentPushbacks = $state<PushbackDto[]>([]);
+  let terminals = $state<TerminalDto[]>([]);
+  let terminalBusy = $state<Set<string>>(new Set());
   let stop: (() => void) | null = null;
 
   onMount(() => {
@@ -20,6 +30,7 @@
       const list = await rpc<Project[]>("projects.list");
       projects = new Map(list.map((p) => [p.id, p]));
       recentPushbacks = await rpc<PushbackDto[]>("pushbacks.recent", { n: 3 });
+      terminals = await rpc<TerminalDto[]>("terminals.list").catch(() => []);
     }, 5000);
   });
   onDestroy(() => stop?.());
@@ -32,6 +43,33 @@
   }
 
   let openSessions = $derived(sessions.filter((s) => s.ended === null));
+  let foreignTerminals = $derived(
+    terminals
+      .filter((terminal) => terminal.role === "foreign")
+      .slice()
+      .sort((a, b) => b.first_seen - a.first_seen)
+      .slice(0, 3),
+  );
+
+  function terminalName(terminal: TerminalDto): string {
+    return [terminal.emulator, terminal.tmux_target ?? terminal.tty.replace("/dev/", "")]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  async function setTerminalRole(id: string, role: TerminalDto["role"]) {
+    const next = new Set(terminalBusy);
+    next.add(id);
+    terminalBusy = next;
+    try {
+      await rpc("terminals.set_role", { id, role });
+      terminals = await rpc<TerminalDto[]>("terminals.list").catch(() => terminals);
+    } finally {
+      const after = new Set(terminalBusy);
+      after.delete(id);
+      terminalBusy = after;
+    }
+  }
 </script>
 
 <div class="grid">
@@ -84,6 +122,28 @@
       {/each}
     {/if}
   </HudPanel>
+
+  <section class="first-sightings">
+    <div class="section-label">FIRST SIGHTINGS</div>
+    {#if foreignTerminals.length === 0}
+      <div class="kv">no foreign terminals recorded yet</div>
+    {:else}
+      <div class="dialogues">
+        {#each foreignTerminals as terminal (terminal.id)}
+          <DialogueBox
+            title={`Claude Code in ${terminal.emulator}`}
+            body={`I found ${terminalName(terminal)}. It is currently marked foreign. Reclassify it if this is your working terminal.`}
+            tone="warn"
+            footer={`seen ${fmtAgo(terminal.first_seen)} ago · cmd ${terminal.cmd_hash}`}
+          >
+            <button class="hud-btn small" disabled={terminalBusy.has(terminal.id)} onclick={() => setTerminalRole(terminal.id, "operator")}>Operator</button>
+            <button class="hud-btn small" disabled={terminalBusy.has(terminal.id)} onclick={() => setTerminalRole(terminal.id, "workbench")}>Workbench</button>
+            <button class="hud-btn small" disabled={terminalBusy.has(terminal.id)} onclick={() => setTerminalRole(terminal.id, "ignored")}>Ignore</button>
+          </DialogueBox>
+        {/each}
+      </div>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -94,6 +154,19 @@
   }
   .grid > :global(:last-child) {
     grid-column: 1 / -1;
+  }
+  .first-sightings {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .section-label {
+    font-family: var(--hud-font-head);
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--hud-ink-dim);
+    padding: 0 2px;
   }
   .kv {
     font-size: 11px;
@@ -167,5 +240,14 @@
     font-family: var(--hud-font-data);
     font-size: 10px;
     flex-shrink: 0;
+  }
+  .dialogues {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .small {
+    padding: 3px 8px;
+    font-size: 10px;
   }
 </style>

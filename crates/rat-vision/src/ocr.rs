@@ -50,7 +50,10 @@ pub struct FakeOcr {
 
 impl FakeOcr {
     pub fn new(scripted: Vec<Vec<OcrBlock>>) -> Self {
-        Self { scripted, idx: Cell::new(0) }
+        Self {
+            scripted,
+            idx: Cell::new(0),
+        }
     }
 }
 
@@ -89,7 +92,10 @@ mod tests {
     }
 
     fn block(text: &str) -> OcrBlock {
-        OcrBlock { text: text.to_string(), bbox: (0, 0, 100, 20) }
+        OcrBlock {
+            text: text.to_string(),
+            bbox: (0, 0, 100, 20),
+        }
     }
 
     #[test]
@@ -97,7 +103,10 @@ mod tests {
         let engine = NullOcr;
         let f = dummy_frame();
         assert!(engine.recognize(&f).is_empty());
-        assert_eq!(engine.health(), SourceHealth::Unavailable("ocr feature not built".to_string()));
+        assert_eq!(
+            engine.health(),
+            SourceHealth::Unavailable("ocr feature not built".to_string())
+        );
     }
 
     #[test]

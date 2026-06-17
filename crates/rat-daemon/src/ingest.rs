@@ -27,7 +27,12 @@ pub struct Ingest {
 
 impl Ingest {
     pub fn new(store: Store, clock: Arc<dyn Clock>, sessionizer: Sessionizer) -> Self {
-        Self { store, clock, sessionizer: Mutex::new(sessionizer), project_cache: Mutex::new(HashMap::new()) }
+        Self {
+            store,
+            clock,
+            sessionizer: Mutex::new(sessionizer),
+            project_cache: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Returns Ok(None) when the event is deliberately dropped (loop guard).
@@ -56,9 +61,10 @@ impl Ingest {
             self.store.add_observation(obs).await?;
         }
 
-        if let (Some(project_id), true) =
-            (event.project_id.clone(), ACTIVITY_KINDS.contains(&event.kind.as_str()))
-        {
+        if let (Some(project_id), true) = (
+            event.project_id.clone(),
+            ACTIVITY_KINDS.contains(&event.kind.as_str()),
+        ) {
             let updates = {
                 let mut sz = self.sessionizer.lock().await;
                 sz.on_activity(&project_id, event.ts, event.kind == "shell_cmd")
@@ -83,8 +89,14 @@ impl Ingest {
         for u in updates {
             match u {
                 SessionUpdate::Open(ws) => self.store.session_open(ws).await?,
-                SessionUpdate::Touch { id, last_activity, commands } => {
-                    self.store.session_touch(id, last_activity, commands).await?
+                SessionUpdate::Touch {
+                    id,
+                    last_activity,
+                    commands,
+                } => {
+                    self.store
+                        .session_touch(id, last_activity, commands)
+                        .await?
                 }
                 SessionUpdate::Close { id, ended } => self.store.session_close(id, ended).await?,
             }
@@ -111,7 +123,9 @@ impl Ingest {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "unnamed".to_string());
                 Ok(Some(
-                    self.store.upsert_project(root.to_string_lossy().into_owned(), name).await?,
+                    self.store
+                        .upsert_project(root.to_string_lossy().into_owned(), name)
+                        .await?,
                 ))
             }
             None => Ok(None),
@@ -142,8 +156,16 @@ fn derive_observation(event: &Event) -> Option<NewObservation> {
         "shell_cmd" => event.payload.get("cmd")?.as_str()?.to_string(),
         "clipboard_text" | "clipboard_redacted" => event.payload.get("text")?.as_str()?.to_string(),
         "git_head" => {
-            let branch = event.payload.get("branch").and_then(|v| v.as_str()).unwrap_or("detached");
-            let commit = event.payload.get("commit").and_then(|v| v.as_str()).unwrap_or("?");
+            let branch = event
+                .payload
+                .get("branch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("detached");
+            let commit = event
+                .payload
+                .get("commit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             format!("checkout {branch}@{}", &commit[..commit.len().min(12)])
         }
         _ => return None,
@@ -195,7 +217,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ingest, _clock, repo) = setup(tmp.path()).await;
 
-        let ev = ingest.ingest(shell_cmd("cargo test", &repo.join("src/deep"))).await.unwrap().unwrap();
+        let ev = ingest
+            .ingest(shell_cmd("cargo test", &repo.join("src/deep")))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(ev.project_id.is_some());
 
         let store_view = ingest.store.clone();
@@ -203,7 +229,10 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].name, "myproj");
 
-        let obs = store_view.recent_observations(10, Some("shell_cmd".into())).await.unwrap();
+        let obs = store_view
+            .recent_observations(10, Some("shell_cmd".into()))
+            .await
+            .unwrap();
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].content, "cargo test");
         assert_eq!(obs[0].meta["exit"], 0);
@@ -221,7 +250,10 @@ mod tests {
 
         ingest.ingest(shell_cmd("ls", &repo)).await.unwrap();
         clock.advance(60_000);
-        ingest.ingest(shell_cmd("cargo build", &repo)).await.unwrap();
+        ingest
+            .ingest(shell_cmd("cargo build", &repo))
+            .await
+            .unwrap();
         let store = ingest.store.clone();
         assert_eq!(store.open_sessions().await.unwrap().len(), 1);
         assert_eq!(store.open_sessions().await.unwrap()[0].commands, 2);
@@ -240,18 +272,33 @@ mod tests {
         let outside_tmp = tempfile::tempdir_in("/tmp").unwrap();
         let outside = outside_tmp.path();
 
-        let ev = ingest.ingest(shell_cmd("echo hi", outside)).await.unwrap().unwrap();
+        let ev = ingest
+            .ingest(shell_cmd("echo hi", outside))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(ev.project_id.is_none());
         assert_eq!(ingest.store.open_sessions().await.unwrap().len(), 0);
         // observation still derived
-        assert_eq!(ingest.store.recent_observations(10, None).await.unwrap().len(), 1);
+        assert_eq!(
+            ingest
+                .store
+                .recent_observations(10, None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
     async fn rat_emit_commands_are_dropped() {
         let tmp = tempfile::tempdir().unwrap();
         let (ingest, _clock, repo) = setup(tmp.path()).await;
-        let dropped = ingest.ingest(shell_cmd("rat emit foo --payload '{}'", &repo)).await.unwrap();
+        let dropped = ingest
+            .ingest(shell_cmd("rat emit foo --payload '{}'", &repo))
+            .await
+            .unwrap();
         assert!(dropped.is_none());
         assert_eq!(ingest.store.count().await.unwrap(), 0);
     }

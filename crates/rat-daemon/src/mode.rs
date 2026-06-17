@@ -37,7 +37,12 @@ impl ModeManager {
     pub fn state(&self) -> ModeState {
         let idle = self.idle_ms.load(Ordering::Relaxed);
         ModeState {
-            mode: if self.away.load(Ordering::Relaxed) { "away" } else { "active" }.to_string(),
+            mode: if self.away.load(Ordering::Relaxed) {
+                "away"
+            } else {
+                "active"
+            }
+            .to_string(),
             since_ms: self.since_ms.load(Ordering::Relaxed),
             idle_ms: (idle >= 0).then_some(idle),
         }
@@ -94,7 +99,9 @@ mod tests {
         assert!(m.update(Some(1_000), 1_000).is_none());
         assert_eq!(m.state().mode, "active");
 
-        let ev = m.update(Some(AWAY_THRESHOLD_MS), 2_000).expect("transition");
+        let ev = m
+            .update(Some(AWAY_THRESHOLD_MS), 2_000)
+            .expect("transition");
         assert_eq!(ev.payload["mode"], "away");
         assert_eq!(m.state().mode, "away");
         assert_eq!(m.state().since_ms, 2_000);
@@ -113,7 +120,9 @@ mod tests {
         m.note_activity(10_000);
         assert!(m.update(None, 20_000).is_none()); // idle 10s
         assert_eq!(m.state().idle_ms, Some(10_000));
-        let ev = m.update(None, 10_000 + AWAY_THRESHOLD_MS).expect("away via fallback");
+        let ev = m
+            .update(None, 10_000 + AWAY_THRESHOLD_MS)
+            .expect("away via fallback");
         assert_eq!(ev.payload["mode"], "away");
     }
 }

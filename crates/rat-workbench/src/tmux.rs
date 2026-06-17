@@ -78,16 +78,7 @@ impl Tmux {
         let cwd_str = cwd
             .to_str()
             .ok_or_else(|| WorkbenchError::Parse("cwd path is not valid UTF-8".into()))?;
-        self.run(&[
-            "new-window",
-            "-d",
-            "-t",
-            session,
-            "-n",
-            name,
-            "-c",
-            cwd_str,
-        ])?;
+        self.run(&["new-window", "-d", "-t", session, "-n", name, "-c", cwd_str])?;
         Ok(format!("{}:{}", session, name))
     }
 
@@ -108,7 +99,7 @@ impl Tmux {
         let start = format!("-{}", lines);
         let out = self.run(&[
             "capture-pane",
-            "-p",          // print to stdout
+            "-p", // print to stdout
             "-t",
             target,
             "-S",

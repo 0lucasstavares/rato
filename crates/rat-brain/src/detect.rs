@@ -2,8 +2,14 @@ use rat_proto::Observation;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Signal {
-    StuckLoop { cmd: String, count: usize, obs_ids: Vec<String> },
-    ErrorBurst { obs_ids: Vec<String> },
+    StuckLoop {
+        cmd: String,
+        count: usize,
+        obs_ids: Vec<String>,
+    },
+    ErrorBurst {
+        obs_ids: Vec<String>,
+    },
 }
 
 fn exit_code(obs: &Observation) -> i64 {
@@ -70,7 +76,11 @@ pub fn stuck_loop(obs: &[Observation]) -> Option<Signal> {
                 if window_ts_max - window_ts_min <= 600_000 {
                     let count = entries.len();
                     let obs_ids = entries[i..i + 3].iter().map(|(_, id)| id.clone()).collect();
-                    return Some(Signal::StuckLoop { cmd, count, obs_ids });
+                    return Some(Signal::StuckLoop {
+                        cmd,
+                        count,
+                        obs_ids,
+                    });
                 }
             }
         }
@@ -132,7 +142,12 @@ mod tests {
         ];
         let sig = stuck_loop(&obs);
         assert!(sig.is_some());
-        if let Some(Signal::StuckLoop { cmd, count, obs_ids }) = sig {
+        if let Some(Signal::StuckLoop {
+            cmd,
+            count,
+            obs_ids,
+        }) = sig
+        {
             assert_eq!(cmd, "cargo test");
             assert_eq!(count, 3);
             assert_eq!(obs_ids.len(), 3);
@@ -158,7 +173,9 @@ mod tests {
     #[test]
     fn ten_mixed_commands_five_min() {
         // 10 different commands all failing within 300_000 ms
-        let cmds = ["cmd1", "cmd2", "cmd3", "cmd4", "cmd5", "cmd6", "cmd7", "cmd8", "cmd9", "cmd10"];
+        let cmds = [
+            "cmd1", "cmd2", "cmd3", "cmd4", "cmd5", "cmd6", "cmd7", "cmd8", "cmd9", "cmd10",
+        ];
         let obs: Vec<Observation> = cmds
             .iter()
             .enumerate()
@@ -213,6 +230,9 @@ mod tests {
             make_obs("c", 200_000, "shell_cmd", "BAR=xyz make build", 1),
         ];
         let sig = stuck_loop(&obs);
-        assert!(sig.is_some(), "env-prefixed commands should normalize to same cmd");
+        assert!(
+            sig.is_some(),
+            "env-prefixed commands should normalize to same cmd"
+        );
     }
 }

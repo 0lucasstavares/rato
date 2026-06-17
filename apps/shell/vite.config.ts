@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  server: { port: 19773, strictPort: true },
   build: {
     rollupOptions: {
       input: {

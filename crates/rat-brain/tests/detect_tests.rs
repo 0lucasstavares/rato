@@ -32,7 +32,12 @@ fn three_within_window() {
     ];
     let sig = stuck_loop(&obs);
     assert!(sig.is_some(), "expected StuckLoop signal");
-    if let Some(Signal::StuckLoop { cmd, count, obs_ids }) = sig {
+    if let Some(Signal::StuckLoop {
+        cmd,
+        count,
+        obs_ids,
+    }) = sig
+    {
         assert_eq!(cmd, "cargo test");
         assert_eq!(count, 3);
         assert_eq!(obs_ids.len(), 3);
@@ -52,7 +57,10 @@ fn three_spread_over_11_min() {
         make_obs("b", 300_000, "shell_cmd", "cargo test", 1),
         make_obs("c", 660_001, "shell_cmd", "cargo test", 1),
     ];
-    assert!(stuck_loop(&obs).is_none(), "spread > 10 min should not trigger stuck_loop");
+    assert!(
+        stuck_loop(&obs).is_none(),
+        "spread > 10 min should not trigger stuck_loop"
+    );
 }
 
 #[test]

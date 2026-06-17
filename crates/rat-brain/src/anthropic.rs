@@ -1,6 +1,8 @@
-use serde_json::{json, Value};
-use crate::backend::{BackendConfig, ChatBackend, ChatRequest, ChatResponse, Provider, Role, Route};
+use crate::backend::{
+    BackendConfig, ChatBackend, ChatRequest, ChatResponse, Provider, Role, Route,
+};
 use crate::error::LlmError;
+use serde_json::{json, Value};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const DEFAULT_CRITIC_MODEL: &str = "claude-opus-4-8";
@@ -18,24 +20,37 @@ pub struct AnthropicBackend {
 impl AnthropicBackend {
     pub fn new(cfg: &BackendConfig, key: String) -> Self {
         Self {
-            base_url: cfg.base_url.clone().unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            base_url: cfg
+                .base_url
+                .clone()
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             key,
-            critic_model: cfg.critic_model.clone().unwrap_or_else(|| DEFAULT_CRITIC_MODEL.to_string()),
-            cheap_model: cfg.cheap_model.clone().unwrap_or_else(|| DEFAULT_CHEAP_MODEL.to_string()),
+            critic_model: cfg
+                .critic_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CRITIC_MODEL.to_string()),
+            cheap_model: cfg
+                .cheap_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CHEAP_MODEL.to_string()),
             http: reqwest::Client::new(),
         }
     }
 
     fn build_body(&self, req: &ChatRequest, model: &str) -> Value {
         // Anthropic messages: system is top-level, messages excludes system role
-        let messages: Vec<Value> = req.messages.iter().filter_map(|m| {
-            let role = match m.role {
-                Role::System => return None, // system goes at top level
-                Role::User => "user",
-                Role::Assistant => "assistant",
-            };
-            Some(json!({ "role": role, "content": m.content }))
-        }).collect();
+        let messages: Vec<Value> = req
+            .messages
+            .iter()
+            .filter_map(|m| {
+                let role = match m.role {
+                    Role::System => return None, // system goes at top level
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                Some(json!({ "role": role, "content": m.content }))
+            })
+            .collect();
 
         json!({
             "model": model,
@@ -53,7 +68,8 @@ impl AnthropicBackend {
 
     async fn do_request(&self, body: &Value) -> Result<reqwest::Response, LlmError> {
         let url = format!("{}/v1/messages", self.base_url);
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .header("x-api-key", &self.key)
             .header("anthropic-version", ANTHROPIC_VERSION)
@@ -107,7 +123,10 @@ impl ChatBackend for AnthropicBackend {
     }
 }
 
-async fn parse_anthropic_response(resp: reqwest::Response, model: &str) -> Result<ChatResponse, LlmError> {
+async fn parse_anthropic_response(
+    resp: reqwest::Response,
+    model: &str,
+) -> Result<ChatResponse, LlmError> {
     let val: Value = resp.json().await?;
 
     // Check for refusal
@@ -137,10 +156,12 @@ async fn parse_anthropic_response(resp: reqwest::Response, model: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{BackendConfig, ChatMessage, ChatRequest, ChatBackend, Provider, Route, Role};
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path, header, body_json};
+    use crate::backend::{
+        BackendConfig, ChatBackend, ChatMessage, ChatRequest, Provider, Role, Route,
+    };
     use serde_json::json;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_backend(server: &MockServer) -> AnthropicBackend {
         let cfg = BackendConfig {
@@ -155,9 +176,10 @@ mod tests {
     fn make_request() -> ChatRequest {
         ChatRequest {
             system: "You are a helpful assistant.".to_string(),
-            messages: vec![
-                ChatMessage { role: Role::User, content: "Hello".to_string() },
-            ],
+            messages: vec![ChatMessage {
+                role: Role::User,
+                content: "Hello".to_string(),
+            }],
             json_schema: json!({ "type": "object", "properties": { "result": { "type": "string" } }, "required": ["result"], "additionalProperties": false }),
             schema_name: "test_schema".to_string(),
             route: Route::Critic,

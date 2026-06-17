@@ -67,7 +67,12 @@ impl RingWriter {
         let sealed = seal(key, bytes, media.as_str().as_bytes());
         std::fs::write(&path, &sealed)?;
 
-        Ok(Segment { id, path, created_ms, media })
+        Ok(Segment {
+            id,
+            path,
+            created_ms,
+            media,
+        })
     }
 
     /// Delete segments whose `created_ms < now - ttl_secs*1000`.
@@ -143,7 +148,12 @@ fn segment_from_path(path: &Path, media: Media) -> Option<Segment> {
     if path.extension()?.to_str()? != "seg" {
         return None;
     }
-    Some(Segment { id, path: path.to_path_buf(), created_ms, media })
+    Some(Segment {
+        id,
+        path: path.to_path_buf(),
+        created_ms,
+        media,
+    })
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -195,7 +205,9 @@ mod tests {
 
         for i in 0..5 {
             clock.advance(10_000);
-            writer.write_segment(Media::Screen, &[i as u8; 4], &key).unwrap();
+            writer
+                .write_segment(Media::Screen, &[i as u8; 4], &key)
+                .unwrap();
         }
 
         let segs = writer.list_segments(Media::Screen).unwrap();
@@ -230,7 +242,11 @@ mod tests {
         assert_eq!(surviving.len(), 13, "expected 13 segments to survive");
         // All survivors must have created_ms >= 180_000
         for s in &surviving {
-            assert!(s.created_ms >= 180_000, "stale segment survived: {:?}", s.created_ms);
+            assert!(
+                s.created_ms >= 180_000,
+                "stale segment survived: {:?}",
+                s.created_ms
+            );
         }
     }
 

@@ -11,7 +11,10 @@ use std::sync::LazyLock;
 static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     vec![
         (Regex::new(r"panicked at").unwrap(), "rust panic"),
-        (Regex::new(r"Traceback \(most recent call last\)").unwrap(), "python traceback"),
+        (
+            Regex::new(r"Traceback \(most recent call last\)").unwrap(),
+            "python traceback",
+        ),
         (Regex::new(r"error\[E\d+\]").unwrap(), "rustc error"),
         (Regex::new(r"Exception").unwrap(), "exception"),
         (Regex::new(r"\bFAILED\b").unwrap(), "test failure"),
@@ -43,20 +46,35 @@ mod tests {
 
     impl Case {
         fn hit(input: &'static str, reason: &'static str) -> Self {
-            Self { input, expected: Some(reason) }
+            Self {
+                input,
+                expected: Some(reason),
+            }
         }
         fn miss(input: &'static str) -> Self {
-            Self { input, expected: None }
+            Self {
+                input,
+                expected: None,
+            }
         }
     }
 
     #[test]
     fn autopin_table() {
         let cases = [
-            Case::hit("thread 'main' panicked at 'index out of bounds'", "rust panic"),
-            Case::hit("Traceback (most recent call last):\n  File \"foo.py\"", "python traceback"),
+            Case::hit(
+                "thread 'main' panicked at 'index out of bounds'",
+                "rust panic",
+            ),
+            Case::hit(
+                "Traceback (most recent call last):\n  File \"foo.py\"",
+                "python traceback",
+            ),
             Case::hit("error[E0502]: cannot borrow `x`", "rustc error"),
-            Case::hit("java.lang.NullPointerException\nException in thread main", "exception"),
+            Case::hit(
+                "java.lang.NullPointerException\nException in thread main",
+                "exception",
+            ),
             Case::hit("test test_foo ... FAILED", "test failure"),
             Case::hit("Segmentation fault (core dumped)", "segfault"),
             Case::miss("Everything looks good"),
@@ -66,12 +84,7 @@ mod tests {
 
         for c in &cases {
             let got = autopin_reason(c.input);
-            assert_eq!(
-                got.as_deref(),
-                c.expected,
-                "input: {:?}",
-                c.input
-            );
+            assert_eq!(got.as_deref(), c.expected, "input: {:?}", c.input);
         }
     }
 

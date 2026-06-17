@@ -44,7 +44,12 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .status()
         .expect("git failed");
-    assert!(status.success(), "git {:?} failed in {}", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} failed in {}",
+        args,
+        dir.display()
+    );
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> String {
@@ -90,7 +95,8 @@ fn test_tmux_lifecycle() {
     tmux.ensure_session("test-sess").expect("ensure_session");
 
     // Second call to ensure_session must be idempotent
-    tmux.ensure_session("test-sess").expect("ensure_session (2nd)");
+    tmux.ensure_session("test-sess")
+        .expect("ensure_session (2nd)");
 
     // Create a window
     let tmp = tempfile::TempDir::new().unwrap();
@@ -103,7 +109,8 @@ fn test_tmux_lifecycle() {
     assert!(tmux.window_alive(&target), "window should be alive");
 
     // Run a command and capture its output
-    tmux.run_in_window(&target, "echo HELLO_RATO").expect("run_in_window");
+    tmux.run_in_window(&target, "echo HELLO_RATO")
+        .expect("run_in_window");
 
     // Give the shell a moment to flush output
     std::thread::sleep(std::time::Duration::from_millis(400));
@@ -117,7 +124,10 @@ fn test_tmux_lifecycle() {
 
     // Kill the window
     tmux.kill_window(&target).expect("kill_window");
-    assert!(!tmux.window_alive(&target), "window should be dead after kill");
+    assert!(
+        !tmux.window_alive(&target),
+        "window should be dead after kill"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -135,8 +145,7 @@ fn test_worktree_lifecycle() {
     let repo = make_repo(&tmp);
 
     // Create worktree
-    let wt = worktree::create(&repo, "t001", "my-task", "HEAD")
-        .expect("create worktree");
+    let wt = worktree::create(&repo, "t001", "my-task", "HEAD").expect("create worktree");
 
     assert!(wt.path.exists(), "worktree path should exist");
     assert_eq!(wt.branch, "rato/my-task");
@@ -257,7 +266,8 @@ fn test_full_cycle_with_tmux() {
 
     // Boot tmux
     tmux.ensure_server().expect("ensure_server");
-    tmux.ensure_session("full-cycle-sess").expect("ensure_session");
+    tmux.ensure_session("full-cycle-sess")
+        .expect("ensure_session");
 
     // Open a window inside the worktree
     let target = tmux
@@ -265,7 +275,8 @@ fn test_full_cycle_with_tmux() {
         .expect("new_window");
 
     // Run a command that produces distinct output
-    tmux.run_in_window(&target, "echo CYCLE_DONE").expect("run_in_window");
+    tmux.run_in_window(&target, "echo CYCLE_DONE")
+        .expect("run_in_window");
     std::thread::sleep(std::time::Duration::from_millis(400));
 
     let captured = tmux.capture_tail(&target, 20).expect("capture_tail");
@@ -323,7 +334,10 @@ fn test_merge_into_live() {
 
     match outcome {
         MergeOutcome::Merged { commit_sha } => {
-            assert_ne!(commit_sha, head_before, "HEAD should have moved after merge");
+            assert_ne!(
+                commit_sha, head_before,
+                "HEAD should have moved after merge"
+            );
             // Verify merged file is present in main repo
             assert!(
                 repo.join("merged_file.txt").exists(),

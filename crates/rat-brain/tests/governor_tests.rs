@@ -7,7 +7,10 @@ fn burst_then_deny() {
     assert!(gov.admit("mentor", 1_000), "first admit should succeed");
     assert!(gov.admit("mentor", 2_000), "second admit should succeed");
     // bucket now empty
-    assert!(!gov.admit("mentor", 3_000), "third admit should be denied (bucket empty)");
+    assert!(
+        !gov.admit("mentor", 3_000),
+        "third admit should be denied (bucket empty)"
+    );
 }
 
 #[test]
@@ -17,7 +20,10 @@ fn refill_after_30_min() {
     assert!(gov.admit("mentor", 1_000));
     assert!(gov.admit("mentor", 2_000));
     // advance 30 min (1_800_000 ms) → should refill 1 token
-    assert!(gov.admit("mentor", 1_000 + 1_800_000), "should admit after 30 min refill");
+    assert!(
+        gov.admit("mentor", 1_000 + 1_800_000),
+        "should admit after 30 min refill"
+    );
 }
 
 #[test]
@@ -31,15 +37,15 @@ fn global_cap_8_per_hour() {
     // mentor admit: t=3_100_000 (fresh bucket, tok=2→1, global=8)
     // 9th at t=3_100_001: one_hour_ago = -499_999, all 8 retained → deny
     let mut gov = Governor::new();
-    assert!(gov.admit("chaos", 0));             // global=1
-    assert!(gov.admit("chaos", 1));             // global=2, chaos tok=0
-    assert!(gov.admit("chaos", 600_001));       // refill, global=3
-    assert!(gov.admit("chaos", 1_200_001));     // refill, global=4
-    assert!(gov.admit("chaos", 1_800_001));     // refill, global=5
-    assert!(gov.admit("chaos", 2_400_001));     // refill, global=6
-    assert!(gov.admit("chaos", 3_000_001));     // refill, global=7
-    assert!(gov.admit("mentor", 3_100_000));    // mentor fresh, tok=2→1, global=8
-    // 9th: all 8 are within 1 hour of t=3_100_001 → global cap hit
+    assert!(gov.admit("chaos", 0)); // global=1
+    assert!(gov.admit("chaos", 1)); // global=2, chaos tok=0
+    assert!(gov.admit("chaos", 600_001)); // refill, global=3
+    assert!(gov.admit("chaos", 1_200_001)); // refill, global=4
+    assert!(gov.admit("chaos", 1_800_001)); // refill, global=5
+    assert!(gov.admit("chaos", 2_400_001)); // refill, global=6
+    assert!(gov.admit("chaos", 3_000_001)); // refill, global=7
+    assert!(gov.admit("mentor", 3_100_000)); // mentor fresh, tok=2→1, global=8
+                                             // 9th: all 8 are within 1 hour of t=3_100_001 → global cap hit
     assert!(
         !gov.admit("mentor", 3_100_001),
         "9th admit should be denied by global cap"
@@ -50,8 +56,14 @@ fn global_cap_8_per_hour() {
 fn quiet_mode_single_token() {
     let mut gov = Governor::new();
     // quiet mode has capacity=1
-    assert!(gov.admit("quiet", 1_000), "first quiet admit should succeed");
-    assert!(!gov.admit("quiet", 2_000), "second quiet admit should fail (capacity=1)");
+    assert!(
+        gov.admit("quiet", 1_000),
+        "first quiet admit should succeed"
+    );
+    assert!(
+        !gov.admit("quiet", 2_000),
+        "second quiet admit should fail (capacity=1)"
+    );
 }
 
 #[test]
@@ -68,7 +80,10 @@ fn chaos_mode_refills_faster() {
     // accrued = 600_000/600_000 = 1.0 → admit ✓
     // BUT: the failed call at t=500_000 updated last_refill_ms to 500_000
     // so from t=500_000 we need 600_000 more ms: t=500_000 + 600_000 = 1_100_000
-    assert!(gov.admit("chaos", 1_100_000), "should admit after 600_000 ms from last refill update");
+    assert!(
+        gov.admit("chaos", 1_100_000),
+        "should admit after 600_000 ms from last refill update"
+    );
 }
 
 #[test]

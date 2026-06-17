@@ -90,7 +90,9 @@ pub fn spawn(tx: tokio::sync::mpsc::Sender<NewEvent>) {
             let mut last_hash: Option<u64> = None;
             loop {
                 std::thread::sleep(Duration::from_secs(1));
-                let Ok(text) = clipboard.get_text() else { continue };
+                let Ok(text) = clipboard.get_text() else {
+                    continue;
+                };
                 let mut hasher = DefaultHasher::new();
                 text.hash(&mut hasher);
                 let h = hasher.finish();
@@ -123,7 +125,11 @@ mod tests {
             "password: hunter2",
         ];
         for p in positives {
-            assert_eq!(classify(p), Classification::SecretLike, "should be secret: {p}");
+            assert_eq!(
+                classify(p),
+                Classification::SecretLike,
+                "should be secret: {p}"
+            );
             let ev = event_for(p).unwrap();
             assert_eq!(ev.kind, "clipboard_redacted");
             assert_eq!(ev.payload["text"], "[redacted: secret-like]");
