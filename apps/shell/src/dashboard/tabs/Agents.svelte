@@ -3,10 +3,10 @@
   import HudPanel from "../../ui/hud/HudPanel.svelte";
   import StatusChip from "../../ui/hud/StatusChip.svelte";
   import { fmtAgo, optionalRpc, poll } from "../../lib/rpc";
-  import type { AgentObservabilityDto, AgentRunDto, AgentWorkflowDto } from "../../lib/types";
+  import type { AgentObservabilityDto, AgentWorkflowDto } from "../../lib/types";
 
   let observability = $state<AgentObservabilityDto>(fallbackObservability());
-  let runs = $state<AgentRunDto[]>([]);
+  let modelUsage = $state<ModelUsageRow[]>([]);
   let stop: (() => void) | null = null;
   const repoApi = "https://api.github.com/repos/0lucasstavares/rato";
 
@@ -104,6 +104,16 @@
     html_url: string;
   }
 
+  interface ModelUsageRow {
+    workflow: string;
+    model: string;
+    status: string;
+    result: string;
+    event: string;
+    updated_ms: number;
+    url: string;
+  }
+
   function hasLabel(issue: GitHubIssue, name: string): boolean {
     return issue.labels.some((label) => label.name === name);
   }
@@ -127,6 +137,25 @@
 
   function latestByWorkflow(runs: GitHubRun[], workflow: string): GitHubRun | undefined {
     return runs.find((run) => run.name === workflow);
+  }
+
+  function modelForWorkflow(workflow: string): string {
+    if (workflow === "agent-reviewer") return "gpt-5.1";
+    if (workflow === "agent-manager") return "gpt-5-mini";
+    if (workflow === "agent-worker" || workflow === "agent-merger") return "gpt-5.1-codex-max";
+    return "configured";
+  }
+
+  function usageRowsFromRuns(runs: GitHubRun[]): ModelUsageRow[] {
+    return runs.slice(0, 30).map((run) => ({
+      workflow: run.name,
+      model: modelForWorkflow(run.name),
+      status: run.status,
+      result: run.conclusion ?? run.status,
+      event: run.event,
+      updated_ms: Date.parse(run.updated_at || run.created_at),
+      url: run.html_url,
+    }));
   }
 
   function withGitHubRuns(base: AgentObservabilityDto, runs: GitHubRun[]): AgentWorkflowDto[] {
@@ -163,6 +192,7 @@
 
     const realIssues = issues.filter((issue) => !issue.pull_request);
     const agentRuns = runsResponse.workflow_runs.filter((run) => run.name.startsWith("agent-"));
+    modelUsage = usageRowsFromRuns(agentRuns);
     const newestAgentRun = agentRuns[0];
     const newestAgentRunMs = newestAgentRun ? Date.parse(newestAgentRun.created_at) : 0;
     const recentlyActive = newestAgentRunMs > Date.now() - 8 * 60 * 60 * 1000;
@@ -191,7 +221,6 @@
     } else {
       observability = await githubObservability().catch(() => rpcData);
     }
-    runs = await optionalRpc<AgentRunDto[]>("workbench.runs", { n: 8 }, []);
   }
 
   onMount(() => {
@@ -215,11 +244,11 @@
     return "warn";
   }
 
-  function runState(run: AgentRunDto): "on" | "warn" | "err" | "off" {
-    if (run.status === "running" || run.status === "merged") return "on";
-    if (run.status === "failed") return "err";
-    if (run.status === "done") return "warn";
-    return "off";
+  function usageState(row: ModelUsageRow): "on" | "warn" | "err" | "off" {
+    if (row.status !== "completed") return "on";
+    if (row.result === "success") return "on";
+    if (row.result === "cancelled" || row.result === "skipped") return "warn";
+    return "err";
   }
 
   function workflowAge(workflow: AgentWorkflowDto): string {
@@ -292,17 +321,20 @@
   </HudPanel>
 
   <section class="bottom">
-    <HudPanel title="RECENT LOCAL RUNS">
-      {#if runs.length === 0}
-        <div class="empty">no local workbench runs reported by this shell</div>
+    <HudPanel title="MODEL USAGE">
+      {#if modelUsage.length === 0}
+        <div class="empty">no public agent workflow usage loaded yet</div>
       {:else}
-        <div class="runs">
-          {#each runs as run (run.id)}
-            <div class="run-row">
-              <span class="mono adapter">{run.adapter}</span>
-              <span class="title">{run.task_title}</span>
-              <StatusChip label={run.status.toUpperCase()} state={runState(run)} />
-              <span class="mono age-cell">{fmtAgo(run.started)} ago</span>
+        <div class="usage-scroll">
+          {#each modelUsage as row (`${row.workflow}-${row.updated_ms}-${row.url}`)}
+            <div class="usage-row">
+              <div class="usage-main">
+                <span class="mono workflow-name">{row.workflow}</span>
+                <span class="model-name">{row.model}</span>
+              </div>
+              <StatusChip label={row.result.toUpperCase()} state={usageState(row)} />
+              <span class="mono event-name">{row.event}</span>
+              <a class="mono age-cell" href={row.url} target="_blank" rel="noreferrer">{fmtAgo(row.updated_ms)} ago</a>
             </div>
           {/each}
         </div>
@@ -454,22 +486,46 @@
     font-size: 20px;
   }
 
-  .runs {
+  .usage-scroll {
     display: flex;
     flex-direction: column;
     gap: 1px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 6px;
+    scrollbar-color: var(--hud-ink) color-mix(in srgb, var(--hud-ink) 10%, transparent);
   }
 
-  .run-row {
+  .usage-scroll::-webkit-scrollbar {
+    width: 9px;
+  }
+
+  .usage-scroll::-webkit-scrollbar-track {
+    background: color-mix(in srgb, var(--hud-ink) 8%, transparent);
+  }
+
+  .usage-scroll::-webkit-scrollbar-thumb {
+    background: var(--hud-ink);
+    border: 2px solid var(--hud-panel);
+  }
+
+  .usage-row {
     display: grid;
-    grid-template-columns: 80px minmax(160px, 1fr) 82px 68px;
+    grid-template-columns: minmax(150px, 1fr) 86px 82px 68px;
     gap: 8px;
     align-items: center;
     padding: 6px 0;
     border-bottom: 1px solid color-mix(in srgb, var(--hud-ink) 12%, transparent);
   }
 
-  .title {
+  .usage-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .model-name {
     font-family: var(--hud-font-body);
     font-size: 13px;
     color: var(--hud-ink);
@@ -478,11 +534,22 @@
     white-space: nowrap;
   }
 
-  .adapter,
+  .workflow-name,
+  .event-name,
   .age-cell {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  a.age-cell {
+    color: var(--hud-ink-dim);
+    text-decoration: none;
+  }
+
+  a.age-cell:hover {
+    color: var(--hud-ink);
+    text-decoration: underline;
   }
 
   .empty,
