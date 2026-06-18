@@ -79,6 +79,6 @@ $env:RATO_AGENT_COMMAND = "rato-agent-wrapper"
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role worker
 ```
 
-The provider wrapper chooses Anthropic first when `ANTHROPIC_API_KEY` is
-available, otherwise OpenAI when `OPENAI_API_KEY` or `CHATGPT_API_KEY` is
-available.
+The provider wrapper chooses OpenAI/Codex first when `OPENAI_API_KEY` or
+`CHATGPT_API_KEY` is available, otherwise Anthropic when `ANTHROPIC_API_KEY` is
+available. Set `RATO_AGENT_PROVIDER=anthropic` to force Claude Code.

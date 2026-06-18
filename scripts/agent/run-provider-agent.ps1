@@ -22,11 +22,11 @@ function Invoke-Logged($Exe, [string[]]$Arguments) {
 
 $provider = $env:RATO_AGENT_PROVIDER
 if (-not $provider -or $provider -eq "auto") {
-    if ($env:ANTHROPIC_API_KEY) {
-        $provider = "anthropic"
-    }
-    elseif ($env:OPENAI_API_KEY -or $env:CHATGPT_API_KEY) {
+    if ($env:OPENAI_API_KEY -or $env:CHATGPT_API_KEY) {
         $provider = "openai"
+    }
+    elseif ($env:ANTHROPIC_API_KEY) {
+        $provider = "anthropic"
     }
     else {
         throw "No provider API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY."
