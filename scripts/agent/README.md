@@ -4,6 +4,9 @@ These scripts are thin wrappers around GitHub and an external agent command.
 They do not contain the intelligence. They assemble project context, role
 prompts, and GitHub state so an agent can act consistently.
 
+The full live workflow is documented in
+`docs/agents/AUTONOMOUS_WORKFLOW.md`.
+
 ## Bootstrap GitHub
 
 ```powershell
@@ -102,3 +105,4 @@ pull request -> ci + agent-reviewer -> agent-merger
 
 That means the system does not wait only for cron ticks; completed agent runs
 trigger the next role in the loop.
+

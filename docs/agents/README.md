@@ -18,6 +18,10 @@ RATO runs in all-out AI-made mode:
 The goal is not to minimize automation. The goal is to make automation
 inspectable enough that the project can move without hidden state.
 
+For the live GitHub Actions loop, autonomy switch, deterministic worker PR
+publishing, autonomous merge gate, and dashboard observability, see
+[`AUTONOMOUS_WORKFLOW.md`](./AUTONOMOUS_WORKFLOW.md).
+
 ## GitHub State Machine
 
 Labels are the protocol.
@@ -84,20 +88,20 @@ memory layer.
 
 ## Merge Policy
 
-The merger agent may merge a PR when all of these are true:
+The live merger harness may merge a PR when all of these are true:
 
 - The PR links exactly one primary issue.
-- CI is green or the only failures are explicitly documented as unrelated and
-  tracked in new issues.
-- The reviewer agent has left a passing `Agent Review` block.
+- CI is green or skipped.
+- The `agent-reviewer` workflow completed successfully.
 - The implementation agent has left an `Agent Work Log` block.
 - The diff does not include secrets, generated dependency churn, or unrelated
   broad rewrites.
-- The PR has `ai:merge` and does not have `ai:blocked`.
+- The PR is not a draft and does not have `ai:blocked`.
 
-For `risk:r2` and `risk:r3`, the merger agent must require two separate AI
-review passes in the PR thread. No human review is required by policy, but human
-comments override agent decisions when present.
+Role prompts may still discuss stricter review burdens by risk, but the current
+deterministic merge gate is CI green plus a green `agent-reviewer` check. No
+human review is required by policy, but human comments override agent decisions
+when present.
 
 ## Human Prompt Budget
 
@@ -109,3 +113,4 @@ Human input should appear as high-level steering, not code:
 - Change labels when the routing is wrong.
 
 If a human writes code, the PR should disclose it in the `Agent Work Log`.
+
