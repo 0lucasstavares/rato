@@ -124,7 +124,22 @@ Actions set `RATO_AGENT_COMMAND` to:
 pwsh ./scripts/agent/run-provider-agent.ps1
 ```
 
-The provider wrapper chooses:
+The role workflows run a provider matrix:
+
+- `openai`: Codex through `@openai/codex`
+- `anthropic`: Claude Code through `@anthropic-ai/claude-code`
+
+Each matrix job sets `RATO_AGENT_PROVIDER` and `RATO_AGENT_ID`, so prompts,
+logs, and worker branches identify which provider acted. Worker branches include
+the provider, for example:
+
+```text
+ai/worker/openai-<run-id>-<attempt>
+ai/worker/anthropic-<run-id>-<attempt>
+```
+
+When `RATO_AGENT_PROVIDER=auto` is used outside the matrix, the provider wrapper
+chooses:
 
 1. OpenAI/Codex when `OPENAI_API_KEY` or `CHATGPT_API_KEY` is present.
 2. Anthropic/Claude Code when `ANTHROPIC_API_KEY` is present and OpenAI is not.

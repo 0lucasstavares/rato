@@ -12,15 +12,19 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: agent-reviewer-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: false
-
 jobs:
   reviewer:
     if: github.event_name != 'schedule' || vars.RATO_AUTONOMY == 'on'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [openai, anthropic]
     timeout-minutes: 30
+    name: reviewer (${{ matrix.provider }})
+    concurrency:
+      group: agent-reviewer-${{ matrix.provider }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,7 +34,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
           RATO_AGENT_COMMAND: pwsh ./scripts/agent/run-provider-agent.ps1
-          RATO_AGENT_PROVIDER: ${{ secrets.RATO_AGENT_PROVIDER || 'auto' }}
+          RATO_AGENT_PROVIDER: ${{ matrix.provider }}
+          RATO_AGENT_ID: ${{ matrix.provider }}-reviewer
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -41,3 +46,4 @@ jobs:
           RATO_EMBEDDING_MODEL: ${{ secrets.RATO_EMBEDDING_MODEL || 'text-embedding-3-small' }}
           RATO_AUDIO_MODEL: ${{ secrets.RATO_AUDIO_MODEL || 'whisper-1' }}
         run: ./scripts/agent/run-agent-role.ps1 -Role reviewer
+

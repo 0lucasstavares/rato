@@ -14,15 +14,19 @@ permissions:
   pull-requests: write
   actions: read
 
-concurrency:
-  group: agent-merger
-  cancel-in-progress: false
-
 jobs:
   merger:
     if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || vars.RATO_AUTONOMY == 'on'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [openai, anthropic]
     timeout-minutes: 30
+    name: merger (${{ matrix.provider }})
+    concurrency:
+      group: agent-merger-${{ matrix.provider }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +36,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
           RATO_AGENT_COMMAND: pwsh ./scripts/agent/run-provider-agent.ps1
-          RATO_AGENT_PROVIDER: ${{ secrets.RATO_AGENT_PROVIDER || 'auto' }}
+          RATO_AGENT_PROVIDER: ${{ matrix.provider }}
+          RATO_AGENT_ID: ${{ matrix.provider }}-merger
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -43,3 +48,4 @@ jobs:
           RATO_EMBEDDING_MODEL: ${{ secrets.RATO_EMBEDDING_MODEL || 'text-embedding-3-small' }}
           RATO_AUDIO_MODEL: ${{ secrets.RATO_AUDIO_MODEL || 'whisper-1' }}
         run: ./scripts/agent/run-agent-role.ps1 -Role merger
+

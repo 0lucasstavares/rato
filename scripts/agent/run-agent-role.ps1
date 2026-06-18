@@ -170,11 +170,18 @@ function Publish-WorkerChanges {
     Write-Host "Worker produced repository changes:"
     $status | ForEach-Object { Write-Host $_ }
 
+    $provider = Get-SafeRefSegment $env:RATO_AGENT_PROVIDER
+    if ($provider -eq "local" -or $provider -eq "auto") {
+        $provider = Get-SafeRefSegment $env:RATO_AGENT_ID
+    }
+    if ($provider -eq "local") {
+        $provider = "agent"
+    }
     $runId = Get-SafeRefSegment $env:GITHUB_RUN_ID
     $runAttempt = Get-SafeRefSegment $env:GITHUB_RUN_ATTEMPT
-    $branch = "ai/worker/$runId-$runAttempt"
+    $branch = "ai/worker/$provider-$runId-$runAttempt"
     if ($runId -eq "local") {
-        $branch = "ai/worker/$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        $branch = "ai/worker/$provider-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     }
 
     Invoke-Checked "git" @("config", "user.name", "rato-agent")
@@ -188,8 +195,8 @@ function Publish-WorkerChanges {
         return
     }
 
-    $title = "Autonomous worker run $runId"
-    $commitMessage = "feat(agent): autonomous worker changes ($runId)"
+    $title = "Autonomous $provider worker run $runId"
+    $commitMessage = "feat(agent): autonomous $provider worker changes ($runId)"
     Invoke-Checked "git" @("commit", "-m", $commitMessage)
     Invoke-Checked "git" @("push", "--set-upstream", "origin", $branch)
 
@@ -205,6 +212,7 @@ The worker harness committed the resulting diff and opened this PR automatically
 ## Agent Notes
 
 - Branch: `$branch`
+- Provider: `$provider`
 - Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
 "@
 
@@ -332,6 +340,13 @@ $overview = Read-RepoFile "docs\agents\README.md"
 $rolePrompt = Read-RepoFile "docs\agents\roles\$Role.md"
 $rootReadme = Read-RepoFile "README.md"
 $providerSummary = Get-ConfiguredProviderSummary
+$agentIdentity = $env:RATO_AGENT_ID
+if (-not $agentIdentity) {
+    $agentIdentity = $env:RATO_AGENT_PROVIDER
+}
+if (-not $agentIdentity) {
+    $agentIdentity = "auto"
+}
 
 $gitState = Try-CommandText { git status --short --branch }
 $recentCommits = Try-CommandText { git log --oneline -20 }
@@ -349,6 +364,7 @@ $prompt = @"
 # RATO Autonomous Agent Invocation
 
 You are running as role: $Role
+Agent identity: $agentIdentity
 
 Act on the repository directly. Use GitHub issues and pull requests as the
 control plane. Do not return a passive plan if you can take the next concrete
