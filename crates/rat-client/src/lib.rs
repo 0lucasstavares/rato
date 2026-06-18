@@ -69,6 +69,15 @@ impl Client {
         Ok(resp.result.unwrap_or(Value::Null))
     }
 
+    /// RPC call that deserializes into a typed value.
+    pub async fn call_value<T: serde::de::DeserializeOwned>(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> anyhow::Result<T> {
+        Ok(serde_json::from_value(self.call(method, params).await?)?)
+    }
+
     pub async fn status(&mut self) -> anyhow::Result<StatusResult> {
         Ok(serde_json::from_value(
             self.call(methods::STATUS, json!({})).await?,
@@ -119,6 +128,14 @@ impl ManagedClient {
                 }
             }
         }
+    }
+
+    pub async fn call_value<T: serde::de::DeserializeOwned>(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> anyhow::Result<T> {
+        Ok(serde_json::from_value(self.call(method, params).await?)?)
     }
 }
 

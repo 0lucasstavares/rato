@@ -8,6 +8,7 @@ rat-proto = { path = "../rat-proto" }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 rat-core = { path = "../rat-core" }

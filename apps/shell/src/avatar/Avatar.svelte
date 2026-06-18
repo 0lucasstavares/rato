@@ -145,7 +145,7 @@
     <span class:wake-pulse={wakePulse}>
       <StatusChip label="MIC" state={micState} />
     </span>
-    <StatusChip label="CLP" state={net === "on" ? "on" : "off"} />
+    <StatusChip label="CLP" state="on" />
     <StatusChip label="NET" state={net === "on" ? "on" : "err"} />
     {#if pendingApprovals > 0}
       <StatusChip label="APR" state="warn" />
@@ -192,8 +192,8 @@
 
 <style>
   .avatar-root {
-    width: 200px;
-    height: 240px;
+    width: 240px;
+    height: 320px;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -204,8 +204,8 @@
     display: flex;
     gap: 2px;
     justify-content: center;
-    padding: 3px 0;
-    width: 170px;
+    padding: 4px 4px 3px;
+    width: 200px;
     background: var(--hud-tape);
     border: 1px solid rgba(30, 26, 21, 0.2);
     transform: rotate(-1.2deg);
@@ -219,16 +219,16 @@
     box-shadow: none;
   }
   .rat {
-    width: 180px;
-    height: 216px;
+    width: 240px;
+    height: 288px;
     margin-top: auto;
     image-rendering: pixelated;
     cursor: pointer;
   }
   .zzz {
     position: absolute;
-    top: 50px;
-    right: 18px;
+    top: 60px;
+    right: 26px;
     font-family: var(--hud-font-marker);
     font-size: 15px;
     color: var(--hud-info);
@@ -238,8 +238,8 @@
   }
   .wake-mark {
     position: absolute;
-    top: 47px;
-    left: 22px;
+    top: 55px;
+    left: 34px;
     font-family: var(--hud-font-head);
     font-size: 12px;
     color: var(--hud-ok);
@@ -261,7 +261,7 @@
   }
   .quick {
     position: absolute;
-    bottom: 10px;
+    bottom: 14px;
     left: 50%;
     rotate: none; /* neutralize .hud-panel's nth-child tilt — transform already rotates */
     transform: translateX(-50%) rotate(-1deg);
@@ -282,10 +282,10 @@
   /* Pushback bubble: absolute paper card above the rat */
   .pushback-bubble {
     position: absolute;
-    top: 24px; /* above canvas (canvas starts below grip ~30px) */
+    top: 32px; /* above canvas (canvas starts below grip ~30px) */
     left: 50%;
     transform: translateX(-50%) rotate(-1deg);
-    width: 170px;
+    width: 200px;
     z-index: 10;
     padding: 0;
     color: var(--hud-ink);
