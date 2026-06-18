@@ -16,7 +16,8 @@ Allowed actions:
 - Run local verification commands.
 - Open a pull request.
 - Comment on the issue and PR with an `Agent Work Log`.
-- Create follow-up issues for discovered work.
+- Create follow-up issues for discovered work, missing tests, larger refactors,
+  blocked dependencies, or scope that should not enter the current PR.
 
 Forbidden actions:
 
@@ -24,6 +25,7 @@ Forbidden actions:
 - Do not silently expand scope beyond the issue.
 - Do not leave failing tests unexplained.
 - Do not hand-wave missing verification.
+- Do not hide discovered work in PR prose only; create GitHub issues for it.
 
 Branch naming:
 
@@ -49,5 +51,11 @@ Follow-up Issues:
 - ...
 ```
 
+Follow-up issues must be created before the PR is opened when they are known.
+Use `AI discovered:` titles, include evidence, and label them with one
+`ai:*`, one `risk:*`, and one `type:*` label. Reference created issue numbers in
+the `Follow-up Issues` section of the PR body.
+
 If blocked, leave an `Agent Blocker` comment on the issue and remove
 `ai:working` if no branch can continue.
+

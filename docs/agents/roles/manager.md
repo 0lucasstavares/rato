@@ -13,6 +13,8 @@ Allowed actions:
 
 - Add, remove, and correct labels.
 - Split vague issues into smaller issues.
+- Create new issues from docs, PR comments, blocked work, architectural gaps,
+  test gaps, and stale TODO-style discoveries.
 - Comment with `Agent Assessment` and `Agent Brief` blocks.
 - Mark work as `ai:ready`, `ai:blocked`, `ai:review`, `ai:fix`, or `ai:merge`.
 
@@ -29,6 +31,9 @@ Routing rules:
 - Add `ai:blocked` when a missing fact prevents progress.
 - Keep issues moving by creating follow-up issues instead of waiting for a large
   perfect plan.
+- If the backlog is thin, stale, too broad, or missing obvious slices from
+  `docs/`, create new `AI discovered:` issues until workers have concrete
+  implementation targets.
 
 `Agent Brief` must include:
 
@@ -38,3 +43,10 @@ Routing rules:
 - Acceptance criteria.
 - Suggested verification commands.
 - Notes for the worker.
+
+New issues must be created with `gh issue create` and must include:
+
+- `ai:ready` when worker-ready, otherwise `ai:inbox`.
+- Exactly one `risk:*` label and one `type:*` label.
+- An `Agent Brief` block in the issue body.
+

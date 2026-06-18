@@ -338,9 +338,11 @@ $recentCommits = Try-CommandText { git log --oneline -20 }
 
 $issues = "gh unavailable"
 $prs = "gh unavailable"
+$labels = "gh unavailable"
 if (Get-Command gh -ErrorAction SilentlyContinue) {
     $issues = Try-CommandText { gh issue list --state open --limit 80 --json number,title,labels,assignees,updatedAt,url }
     $prs = Try-CommandText { gh pr list --state open --limit 50 --json number,title,labels,headRefName,updatedAt,url,statusCheckRollup }
+    $labels = Try-CommandText { gh label list --limit 80 --json name,description }
 }
 
 $prompt = @"
@@ -398,11 +400,63 @@ $issues
 $prs
 ```
 
+## Available GitHub Labels
+
+```json
+$labels
+```
+
+## Issue Creation Protocol
+
+Agents are allowed and expected to create GitHub issues when they discover work.
+Before creating an issue, quickly check the open issue list for an obvious
+duplicate. If no duplicate exists, create the issue immediately instead of
+leaving the work only in a comment, PR body, TODO, or final summary.
+
+Use this shape:
+
+```markdown
+## Agent Brief
+
+Role: <creating role>
+Target: new issue
+Risk: risk:r?
+Type: type:?
+Recommended next agent: manager | worker | reviewer
+
+Context:
+- ...
+
+Acceptance:
+- ...
+
+Likely Files:
+- ...
+
+Verification:
+- ...
+
+Evidence:
+- ...
+```
+
+Create issues with labels at creation time where possible:
+
+```text
+gh issue create --title "AI discovered: <short imperative title>" --body-file <body.md> --label ai:inbox --label risk:r1 --label type:feature
+```
+
+Use `ai:ready` instead of `ai:inbox` only when the issue already has enough
+context and acceptance criteria for a worker to implement it.
+
 ## Required Behavior
 
 - Prefer taking one complete action over producing advice.
 - If acting on code, create or use a branch and open/update a PR.
-- If acting on issues, update labels and leave the required agent block.
+- If acting on issues, create missing issues, update labels, and leave the
+  required agent block.
+- If discovering follow-up work, create GitHub issues and reference their issue
+  numbers in the current issue, PR, or review.
 - If blocked, leave an `Agent Blocker` comment with the exact missing condition.
 - Keep all progress visible on GitHub.
 "@

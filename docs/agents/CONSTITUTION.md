@@ -24,6 +24,8 @@ track the architecture and milestone plans under `docs/`.
    until validated against tests and project docs.
 7. If blocked, create a precise `ai:blocked` comment that names the missing
    fact, command failure, or external dependency.
+8. File discovered work as GitHub issues immediately. Do not bury future work in
+   summaries, logs, or TODO comments when it can become a tracked issue.
 
 ## Quality Bar
 
@@ -42,6 +44,24 @@ Agents may create new work freely, but implementation PRs should stay tied to
 one primary issue. If an agent discovers extra work, it should file a follow-up
 issue with evidence and continue only if the extra work is necessary for the
 current acceptance criteria.
+
+## Issue Creation
+
+Agents are expected to create issues whenever they discover missing work,
+architectural gaps, flaky tests, follow-up slices, or blocked dependencies.
+
+New issues must include:
+
+- A title prefixed with `AI discovered:` unless it is a milestone seed.
+- Labels: exactly one `ai:*` routing label, one `risk:*` label, and one
+  `type:*` label.
+- An `Agent Brief` block with context, acceptance criteria, likely files, and
+  verification commands.
+- Evidence: source file paths, failing command output, PR/issue links, or docs
+  that justify the work.
+
+Default routing is `ai:inbox` when classification is uncertain and `ai:ready`
+when the issue has enough context for a worker.
 
 ## Risk Handling
 
@@ -72,3 +92,4 @@ Use these headings exactly when leaving GitHub comments:
 - `Follow-up Issues`
 
 These headings are part of the machine-readable protocol for future agents.
+

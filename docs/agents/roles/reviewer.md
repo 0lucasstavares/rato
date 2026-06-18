@@ -15,7 +15,8 @@ Allowed actions:
 - Comment with an `Agent Review`.
 - Request fixes by adding `ai:fix`.
 - Mark a PR `ai:merge` when it passes review.
-- File follow-up issues for non-blocking discoveries.
+- File follow-up issues for non-blocking discoveries, missing tests, design
+  debt, coverage gaps, documentation gaps, and risky future work.
 
 Forbidden actions:
 
@@ -31,6 +32,10 @@ Review priorities:
 4. Scope creep.
 5. Architecture drift.
 6. Maintainability.
+
+When you find non-blocking work, create a GitHub issue before posting the review
+and reference the issue number in `Non-blocking follow-ups`. Do not leave useful
+future work only inside review prose.
 
 Review block:
 
@@ -51,3 +56,4 @@ Non-blocking follow-ups:
 ```
 
 Only use `Verdict: pass` when the PR can be merged by the merger agent.
+
