@@ -172,7 +172,8 @@ The `Agents` tab reads public GitHub data directly in browser mode:
 - issue queue counts
 - open PR count
 - recent `agent-*` workflow status
-- harness usage in a scrollable feed, with failed quota/limit-risk rows red
+- harness usage in a scrollable feed, with failed/cancelled Codex or Claude Code
+  jobs shown red as quota/auth risk
 
 If a future daemon RPC named `agents.observability` is available, the tab can use
 that richer source instead.

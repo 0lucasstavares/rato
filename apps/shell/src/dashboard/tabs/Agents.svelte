@@ -160,12 +160,13 @@
   }
 
   function resultForJob(job: GitHubJob): string {
+    const harness = harnessFromJob(job.name);
     if (job.status !== "completed") return job.status;
-    if (job.conclusion === "failure" && harnessFromJob(job.name) === "codex") {
-      return "failed / check quota";
+    if ((job.conclusion === "failure" || job.conclusion === "cancelled" || job.conclusion === "timed_out") && harness === "codex") {
+      return "quota/auth risk";
     }
-    if (job.conclusion === "failure" && harnessFromJob(job.name) === "claude-code") {
-      return "failed / check quota";
+    if ((job.conclusion === "failure" || job.conclusion === "cancelled" || job.conclusion === "timed_out") && harness === "claude-code") {
+      return "quota/auth risk";
     }
     return job.conclusion ?? "completed";
   }
@@ -302,12 +303,13 @@
   function usageState(row: HarnessUsageRow): "on" | "warn" | "err" | "off" {
     if (row.status !== "completed") return "on";
     if (row.result === "success") return "on";
+    if (row.result.includes("quota") || row.result.includes("auth")) return "err";
     if (row.result === "cancelled" || row.result === "skipped") return "warn";
     return "err";
   }
 
   function isQuotaRisk(row: HarnessUsageRow): boolean {
-    return row.result.includes("quota") || row.result.includes("limit") || row.result === "failure";
+    return row.result.includes("quota") || row.result.includes("limit") || row.result.includes("auth") || row.result === "failure";
   }
 
   function workflowAge(workflow: AgentWorkflowDto): string {
