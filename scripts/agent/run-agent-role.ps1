@@ -130,6 +130,104 @@ function Invoke-AgentCommand($CommandLine, $Prompt) {
     return $LASTEXITCODE
 }
 
+function Invoke-Checked($Exe, [string[]]$Arguments) {
+    Write-Host "Running: $Exe $($Arguments -join ' ')"
+    & $Exe @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code $LASTEXITCODE`: $Exe $($Arguments -join ' ')"
+    }
+}
+
+function Get-SafeRefSegment($Value) {
+    if (-not $Value) {
+        return "local"
+    }
+    $safe = $Value.ToLowerInvariant() -replace "[^a-z0-9._-]+", "-"
+    $safe = $safe.Trim("-._")
+    if (-not $safe) {
+        return "local"
+    }
+    return $safe
+}
+
+function Publish-WorkerChanges {
+    if ($Role -ne "worker") {
+        return
+    }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "Worker changed files cannot be published because git is unavailable."
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "Worker changed files cannot be published because gh is unavailable."
+    }
+
+    $status = @(git status --porcelain)
+    if (-not $status -or $status.Count -eq 0) {
+        Write-Host "Worker produced no repository diff; no PR to open."
+        return
+    }
+
+    Write-Host "Worker produced repository changes:"
+    $status | ForEach-Object { Write-Host $_ }
+
+    $runId = Get-SafeRefSegment $env:GITHUB_RUN_ID
+    $runAttempt = Get-SafeRefSegment $env:GITHUB_RUN_ATTEMPT
+    $branch = "ai/worker/$runId-$runAttempt"
+    if ($runId -eq "local") {
+        $branch = "ai/worker/$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    }
+
+    Invoke-Checked "git" @("config", "user.name", "rato-agent")
+    Invoke-Checked "git" @("config", "user.email", "rato-agent@users.noreply.github.com")
+    Invoke-Checked "git" @("switch", "-c", $branch)
+    Invoke-Checked "git" @("add", "-A", "--", ".")
+
+    $staged = @(git diff --cached --name-only)
+    if (-not $staged -or $staged.Count -eq 0) {
+        Write-Host "Worker diff disappeared after staging filters; no PR to open."
+        return
+    }
+
+    $title = "Autonomous worker run $runId"
+    $commitMessage = "feat(agent): autonomous worker changes ($runId)"
+    Invoke-Checked "git" @("commit", "-m", $commitMessage)
+    Invoke-Checked "git" @("push", "--set-upstream", "origin", $branch)
+
+    $body = @"
+## Agent Assessment
+
+Autonomous worker run published repository changes from GitHub Actions run `$runId`.
+
+## Agent Verification
+
+The worker harness committed the resulting diff and opened this PR automatically. CI and reviewer workflows should now inspect the branch.
+
+## Agent Notes
+
+- Branch: `$branch`
+- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+"@
+
+    $existing = @(gh pr list --head $branch --state open --json number --jq ".[].number")
+    if ($existing -and $existing.Count -gt 0) {
+        Write-Host "PR already exists for ${branch}: #$($existing[0])"
+        return
+    }
+
+    Invoke-Checked "gh" @(
+        "pr",
+        "create",
+        "--title",
+        $title,
+        "--body",
+        $body,
+        "--base",
+        "main",
+        "--head",
+        $branch
+    )
+}
+
 $constitution = Read-RepoFile "docs\agents\CONSTITUTION.md"
 $overview = Read-RepoFile "docs\agents\README.md"
 $rolePrompt = Read-RepoFile "docs\agents\roles\$Role.md"
@@ -218,4 +316,11 @@ if ($PrintOnly -or -not $env:RATO_AGENT_COMMAND) {
     exit 0
 }
 
-exit (Invoke-AgentCommand $env:RATO_AGENT_COMMAND $prompt)
+$agentExitCode = Invoke-AgentCommand $env:RATO_AGENT_COMMAND $prompt
+if ($agentExitCode -ne 0) {
+    exit $agentExitCode
+}
+
+Publish-WorkerChanges
+exit 0
+
