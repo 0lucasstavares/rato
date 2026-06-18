@@ -228,6 +228,105 @@ The worker harness committed the resulting diff and opened this PR automatically
     )
 }
 
+function Test-CheckRollupGreen($Rollup) {
+    $checks = @($Rollup)
+    if (-not $checks -or $checks.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($check in $checks) {
+        if ($check.status -ne "COMPLETED") {
+            return $false
+        }
+        if ($check.conclusion -and $check.conclusion -ne "SUCCESS" -and $check.conclusion -ne "SKIPPED") {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-HasSuccessfulWorkflow($Rollup, $WorkflowName) {
+    foreach ($check in @($Rollup)) {
+        if ($check.workflowName -eq $WorkflowName -and $check.status -eq "COMPLETED" -and $check.conclusion -eq "SUCCESS") {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-HasLabel($Pr, $Name) {
+    foreach ($label in @($Pr.labels)) {
+        if ($label.name -eq $Name) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Merge-EligiblePullRequests {
+    if ($Role -ne "merger") {
+        return
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "Merger cannot inspect or merge pull requests because gh is unavailable."
+    }
+
+    $json = gh pr list --state open --limit 30 --json number,title,isDraft,mergeStateStatus,labels,statusCheckRollup,url
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to list pull requests for merger."
+    }
+    $prs = @($json | ConvertFrom-Json)
+    if (-not $prs -or $prs.Count -eq 0) {
+        Write-Host "No open pull requests to merge."
+        return
+    }
+
+    foreach ($pr in $prs) {
+        $number = [string]$pr.number
+        $reasons = @()
+        if ($pr.isDraft) {
+            $reasons += "draft"
+        }
+        if ($pr.mergeStateStatus -ne "CLEAN" -and $pr.mergeStateStatus -ne "HAS_HOOKS") {
+            $reasons += "merge state $($pr.mergeStateStatus)"
+        }
+        if (Test-HasLabel $pr "ai:blocked") {
+            $reasons += "ai:blocked"
+        }
+        if (-not (Test-CheckRollupGreen $pr.statusCheckRollup)) {
+            $reasons += "checks not green"
+        }
+        if (-not (Test-HasSuccessfulWorkflow $pr.statusCheckRollup "agent-reviewer")) {
+            $reasons += "agent-reviewer not green"
+        }
+
+        if ($reasons.Count -gt 0) {
+            Write-Host "PR #$number not eligible: $($reasons -join ', ')"
+            continue
+        }
+
+        $body = @"
+## Agent Merge Decision
+
+Verdict: merged
+Reason:
+- Autonomous merge policy accepted this PR.
+- Merge state is clean.
+- CI and agent-reviewer checks are green.
+- PR is not draft and not blocked.
+
+Checks:
+- CI: green
+- Review count: agent-reviewer check passed
+- Linked issue: see PR body
+- Risk: enforced by checks, not human gate
+"@
+        Invoke-Checked "gh" @("pr", "comment", $number, "--body", $body)
+        Invoke-Checked "gh" @("pr", "merge", $number, "--squash", "--delete-branch", "--admin")
+    }
+}
+
 $constitution = Read-RepoFile "docs\agents\CONSTITUTION.md"
 $overview = Read-RepoFile "docs\agents\README.md"
 $rolePrompt = Read-RepoFile "docs\agents\roles\$Role.md"
@@ -322,5 +421,6 @@ if ($agentExitCode -ne 0) {
 }
 
 Publish-WorkerChanges
+Merge-EligiblePullRequests
 exit 0
 
