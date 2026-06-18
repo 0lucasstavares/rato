@@ -46,6 +46,13 @@ async fn rpc_call(
     client.call(&method, params.unwrap_or(Value::Null)).await.map_err(|e| e.to_string())
 }
 
+/// Lightweight health probe used by the avatar NET LED.
+#[tauri::command]
+async fn daemon_ok(state: tauri::State<'_, Shell>) -> Result<bool, String> {
+    let mut client = state.client.lock().await;
+    Ok(client.ensure_connected().await)
+}
+
 #[tauri::command]
 async fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("dashboard") {
@@ -71,7 +78,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(Shell { client: Mutex::new(ManagedClient::new(rat_core::paths::socket_path())) })
-        .invoke_handler(tauri::generate_handler![rpc_call, open_dashboard])
+        .invoke_handler(tauri::generate_handler![rpc_call, open_dashboard, daemon_ok])
         .setup(|app| {
             // avatar: restore the last dragged position; default = flush bottom-left
             // (torso-up bust — the screen edge is his crop line). spec 2026-06-11
