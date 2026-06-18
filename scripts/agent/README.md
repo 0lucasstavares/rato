@@ -92,3 +92,13 @@ Two manual workflows control scheduled autonomy:
 
 Scheduled manager, worker, reviewer, and merger loops only run when
 `RATO_AUTONOMY` is `on`. Manual dispatch still works while autonomy is off.
+
+When autonomy is on, workflows also hand off through `workflow_run` events:
+
+```text
+agent-merger -> agent-manager -> agent-worker -> pull request
+pull request -> ci + agent-reviewer -> agent-merger
+```
+
+That means the system does not wait only for cron ticks; completed agent runs
+trigger the next role in the loop.

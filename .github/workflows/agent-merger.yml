@@ -2,7 +2,7 @@ name: agent-merger
 
 on:
   workflow_run:
-    workflows: ["ci"]
+    workflows: ["ci", "agent-reviewer"]
     types: [completed]
   schedule:
     - cron: "29 */4 * * *"
