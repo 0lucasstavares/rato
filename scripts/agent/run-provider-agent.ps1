@@ -39,7 +39,13 @@ switch ($provider.ToLowerInvariant()) {
             throw "RATO_AGENT_PROVIDER=anthropic but ANTHROPIC_API_KEY is not configured."
         }
         Require-Command "npx"
-        Invoke-Logged "npx" @("-y", "@anthropic-ai/claude-code", "-p", $prompt)
+        Invoke-Logged "npx" @(
+            "-y",
+            "@anthropic-ai/claude-code",
+            "-p",
+            $prompt,
+            "--dangerously-skip-permissions"
+        )
     }
     "openai" {
         if (-not $env:OPENAI_API_KEY -and $env:CHATGPT_API_KEY) {
