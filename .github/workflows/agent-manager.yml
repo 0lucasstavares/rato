@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
-          RATO_AGENT_COMMAND: ${{ secrets.RATO_AGENT_COMMAND }}
+          RATO_AGENT_COMMAND: pwsh ./scripts/agent/run-provider-agent.ps1
           RATO_AGENT_PROVIDER: ${{ secrets.RATO_AGENT_PROVIDER || 'auto' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}

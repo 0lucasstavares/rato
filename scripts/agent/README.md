@@ -25,8 +25,8 @@ $env:GH_TOKEN = "<fine-grained-token-for-this-repo>"
 
 The GitHub Actions workflows expect these repository secrets:
 
-- `RATO_AGENT_COMMAND`: command line for the agent wrapper to execute. It must
-  read the prompt from stdin.
+- `RATO_AGENT_COMMAND`: public workflow config. The repo defaults this to
+  `pwsh ./scripts/agent/run-provider-agent.ps1`.
 - `RATO_GH_TOKEN`: optional fine-grained token. If omitted, workflows fall back
   to `github.token`.
 - `RATO_AGENT_PROVIDER`: optional provider preference: `openai`, `anthropic`,
@@ -68,10 +68,9 @@ gpt-5-mini
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role manager
 ```
 
-By default, the script prints the full prompt. To make it execute an agent, set
-`RATO_AGENT_COMMAND` to a command line that reads a prompt from stdin and
-performs the work through GitHub and the local checkout. The command may include
-arguments.
+By default, the script prints the full prompt unless `RATO_AGENT_COMMAND` is set.
+The GitHub workflows set it to the repo-owned provider wrapper:
+`pwsh ./scripts/agent/run-provider-agent.ps1`.
 
 Example shape:
 
@@ -80,6 +79,6 @@ $env:RATO_AGENT_COMMAND = "rato-agent-wrapper"
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role worker
 ```
 
-The wrapper can call Codex, Claude Code, or any other agent CLI. Keeping the
-wrapper outside this repo lets the project stay agent-agnostic while the GitHub
-protocol remains stable.
+The provider wrapper chooses Anthropic first when `ANTHROPIC_API_KEY` is
+available, otherwise OpenAI when `OPENAI_API_KEY` or `CHATGPT_API_KEY` is
+available.
