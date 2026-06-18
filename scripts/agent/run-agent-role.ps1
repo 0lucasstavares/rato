@@ -415,12 +415,13 @@ if ($PrintOnly -or -not $env:RATO_AGENT_COMMAND) {
     exit 0
 }
 
+Merge-EligiblePullRequests
+
 $agentExitCode = Invoke-AgentCommand $env:RATO_AGENT_COMMAND $prompt
 if ($agentExitCode -ne 0) {
     exit $agentExitCode
 }
 
 Publish-WorkerChanges
-Merge-EligiblePullRequests
 exit 0
 
