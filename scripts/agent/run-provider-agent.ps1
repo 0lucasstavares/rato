@@ -62,7 +62,16 @@ switch ($provider.ToLowerInvariant()) {
             $model = "gpt-5.1-codex-max"
         }
         Require-Command "npx"
-        Invoke-Logged "npx" @("-y", "@openai/codex", "exec", "--model", $model, $prompt)
+        Invoke-Logged "npx" @(
+            "-y",
+            "@openai/codex",
+            "exec",
+            "--model",
+            $model,
+            "--sandbox",
+            "danger-full-access",
+            $prompt
+        )
     }
     default {
         throw "Unsupported RATO_AGENT_PROVIDER '$provider'. Use auto, anthropic, or openai."
