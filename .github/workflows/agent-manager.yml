@@ -1,0 +1,52 @@
+name: agent-manager
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      role:
+        description: Role to run
+        required: true
+        default: manager
+        type: choice
+        options:
+          - manager
+          - cartographer
+          - orchestrator
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: agent-manager
+  cancel-in-progress: false
+
+jobs:
+  manager:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run agent role
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
+          RATO_AGENT_COMMAND: ${{ secrets.RATO_AGENT_COMMAND || '' }}
+          RATO_AGENT_PROVIDER: ${{ secrets.RATO_AGENT_PROVIDER || 'auto' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          RATO_AGENT_MODEL: ${{ secrets.RATO_AGENT_MODEL || 'gpt-5.1-codex-max' }}
+          RATO_AGENT_FAST_MODEL: ${{ secrets.RATO_AGENT_FAST_MODEL || 'gpt-5-mini' }}
+          RATO_AGENT_REVIEW_MODEL: ${{ secrets.RATO_AGENT_REVIEW_MODEL || 'gpt-5.1' }}
+          RATO_EMBEDDING_MODEL: ${{ secrets.RATO_EMBEDDING_MODEL || 'text-embedding-3-small' }}
+          RATO_AUDIO_MODEL: ${{ secrets.RATO_AUDIO_MODEL || 'whisper-1' }}
+        run: |
+          $role = "${{ inputs.role }}"
+          if (-not $role) { $role = "manager" }
+          ./scripts/agent/run-agent-role.ps1 -Role $role

@@ -1,0 +1,50 @@
+name: AI work item
+description: Work routed through the autonomous agent system.
+title: "[AI]: "
+labels: ["ai:inbox"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What should change?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link docs, files, logs, screenshots, or failing commands.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be true when this is done?
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      options:
+        - risk:r0
+        - risk:r1
+        - risk:r2
+        - risk:r3
+    validations:
+      required: false
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - type:bug
+        - type:feature
+        - type:test
+        - type:docs
+        - type:refactor
+        - type:chore
+    validations:
+      required: false
