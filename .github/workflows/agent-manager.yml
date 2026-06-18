@@ -48,6 +48,8 @@ jobs:
           RATO_AGENT_HARNESS: ${{ matrix.harness }}
           RATO_AGENT_PROVIDER: ${{ matrix.harness }}
           RATO_AGENT_ID: ${{ matrix.harness }}-manager
+          RATO_CODEX_API_KEY: ${{ secrets.RATO_CODEX_API_KEY || secrets.OPENAI_API_KEY || secrets.CHATGPT_API_KEY }}
+          RATO_CLAUDE_AUTH_TOKEN: ${{ secrets.RATO_CLAUDE_AUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

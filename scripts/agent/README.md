@@ -34,9 +34,14 @@ The GitHub Actions workflows expect these repository secrets:
   to `github.token`.
 - `RATO_AGENT_PROVIDER`: optional provider preference: `openai`, `anthropic`,
   `openrouter`, or `auto`.
+- `RATO_AGENT_HARNESS`: optional harness preference: `codex`, `claude-code`,
+  or `auto`.
+- `RATO_CODEX_API_KEY`: preferred credential for the Codex harness.
+- `RATO_CLAUDE_AUTH_TOKEN`: preferred credential for the Claude Code harness.
 - `OPENAI_API_KEY`: OpenAI API key for Codex/OpenAI-compatible wrappers.
 - `CHATGPT_API_KEY`: optional alias for wrappers that expect "ChatGPT" naming.
 - `ANTHROPIC_API_KEY`: Anthropic API key for Claude/Anthropic wrappers.
+- `ANTHROPIC_AUTH_TOKEN`: optional alias accepted by some Anthropic CLI setups.
 - `OPENROUTER_API_KEY`: optional OpenRouter key.
 - `RATO_AGENT_MODEL`: primary coding model. Default: `gpt-5.1-codex-max`.
 - `RATO_AGENT_FAST_MODEL`: cheaper triage/planning model. Default:

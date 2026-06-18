@@ -144,6 +144,18 @@ chooses:
 1. OpenAI/Codex when `OPENAI_API_KEY` or `CHATGPT_API_KEY` is present.
 2. Anthropic/Claude Code when `ANTHROPIC_API_KEY` is present and OpenAI is not.
 
+Preferred harness secrets in Actions:
+
+- `RATO_CODEX_API_KEY`
+- `RATO_CLAUDE_AUTH_TOKEN`
+
+Fallback aliases still work:
+
+- `OPENAI_API_KEY`
+- `CHATGPT_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_AUTH_TOKEN`
+
 Defaults:
 
 - Primary model: `gpt-5.1-codex-max`

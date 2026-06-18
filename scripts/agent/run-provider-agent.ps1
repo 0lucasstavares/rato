@@ -20,6 +20,16 @@ function Invoke-Logged($Harness, $Exe, [string[]]$Arguments) {
     exit $LASTEXITCODE
 }
 
+function Get-FirstNonEmptyValue {
+    param([string[]]$Values)
+    foreach ($value in $Values) {
+        if ($value) {
+            return $value
+        }
+    }
+    return $null
+}
+
 $harness = $env:RATO_AGENT_HARNESS
 if (-not $harness) {
     $harness = $env:RATO_AGENT_PROVIDER
@@ -39,9 +49,17 @@ if (-not $harness -or $harness -eq "auto") {
 $normalizedHarness = $harness.ToLowerInvariant()
 switch ($normalizedHarness) {
     { $_ -in @("claude-code", "claude", "anthropic") } {
-        if (-not $env:ANTHROPIC_API_KEY) {
-            throw "Claude Code harness requested but ANTHROPIC_API_KEY is not configured."
+        $anthropicToken = Get-FirstNonEmptyValue @(
+            $env:RATO_CLAUDE_AUTH_TOKEN
+            $env:RATO_ANTHROPIC_API_KEY
+            $env:ANTHROPIC_AUTH_TOKEN
+            $env:ANTHROPIC_API_KEY
+        )
+        if (-not $anthropicToken) {
+            throw "Claude Code harness requested but no Anthropic credential is configured."
         }
+        $env:ANTHROPIC_AUTH_TOKEN = $anthropicToken
+        $env:ANTHROPIC_API_KEY = $anthropicToken
         Require-Command "npx"
         Invoke-Logged "claude-code" "npx" @(
             "-y",
@@ -52,15 +70,19 @@ switch ($normalizedHarness) {
         )
     }
     { $_ -in @("codex", "openai") } {
-        if (-not $env:OPENAI_API_KEY -and $env:CHATGPT_API_KEY) {
-            $env:OPENAI_API_KEY = $env:CHATGPT_API_KEY
+        $openAiKey = Get-FirstNonEmptyValue @(
+            $env:RATO_CODEX_API_KEY
+            $env:RATO_OPENAI_API_KEY
+            $env:OPENAI_API_KEY
+            $env:CHATGPT_API_KEY
+        )
+        if (-not $openAiKey) {
+            throw "Codex harness requested but no OpenAI credential is configured."
         }
-        if (-not $env:OPENAI_API_KEY) {
-            throw "Codex harness requested but OPENAI_API_KEY or CHATGPT_API_KEY is not configured."
-        }
-        $env:CODEX_API_KEY = $env:OPENAI_API_KEY
-        $env:OPENAI_KEY = $env:OPENAI_API_KEY
-        $env:OPENAI_API_TOKEN = $env:OPENAI_API_KEY
+        $env:CODEX_API_KEY = $openAiKey
+        $env:OPENAI_API_KEY = $openAiKey
+        $env:OPENAI_KEY = $openAiKey
+        $env:OPENAI_API_TOKEN = $openAiKey
         $model = $env:RATO_AGENT_MODEL
         if (-not $model) {
             $model = "gpt-5.1-codex-max"
