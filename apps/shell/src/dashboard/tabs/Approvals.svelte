@@ -38,6 +38,31 @@
     return "R3";
   }
 
+  type InjectionInfo = {
+    exact_bytes: string;
+    include_enter: boolean;
+    target: string | null;
+    expected_command: string | null;
+  };
+
+  function injectionInfo(approval: ApprovalDto): InjectionInfo | null {
+    const payload = approval.payload as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") return null;
+    const exact = payload["exact_bytes"];
+    if (typeof exact !== "string") return null;
+    const includeEnter = Boolean(payload["include_enter"]);
+    const target = typeof payload["target"] === "string" ? payload["target"] : null;
+    const expected =
+      typeof payload["expected_command"] === "string" ? payload["expected_command"] : null;
+
+    return {
+      exact_bytes: exact,
+      include_enter: includeEnter,
+      target,
+      expected_command: expected,
+    };
+  }
+
   function slugFor(id: string): string {
     // Last 6 chars of the approval id — matches daemon logic
     return id.slice(-6);
@@ -103,6 +128,7 @@
   {:else}
     <div class="section-label">PENDING ({pending.length})</div>
     {#each pending as a (a.id)}
+      {@const inj = injectionInfo(a)}
       <div class="card-wrap">
         <div
           class="approval-card hud-panel hud-grunge"
@@ -120,6 +146,26 @@
 
             <div class="card-reason">{a.reason}</div>
             <div class="voice-slug mono">voice slug: {a.spoken_slug}</div>
+
+            {#if inj}
+              <div class="inject-box">
+                <div class="inject-meta">
+                  {#if inj.target}
+                    <span class="hud-chip inject-chip">target: {inj.target}</span>
+                  {/if}
+                  {#if inj.expected_command}
+                    <span class="hud-chip inject-chip dim-chip">cmd: {inj.expected_command}</span>
+                  {/if}
+                  {#if inj.include_enter}
+                    <span class="hud-chip inject-chip">Enter after paste</span>
+                  {:else}
+                    <span class="hud-chip inject-chip dim-chip">No Enter</span>
+                  {/if}
+                </div>
+                <pre class="inject-bytes">{inj.exact_bytes}</pre>
+                <div class="countdown-overlay" aria-hidden="true">{expiryCountdown(a.expires_at)}</div>
+              </div>
+            {/if}
 
             {#if diffstatText(a)}
               <pre class="diffstat-block">{diffstatText(a)}</pre>
@@ -306,6 +352,56 @@
     word-break: break-all;
     max-height: 120px;
     overflow-y: auto;
+  }
+
+  .inject-box {
+    position: relative;
+    margin-top: 8px;
+    border: 1px dashed color-mix(in srgb, var(--hud-ink) 45%, transparent);
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--hud-panel) 78%, transparent);
+  }
+
+  .inject-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .inject-chip {
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    padding: 4px 6px;
+    background: color-mix(in srgb, var(--hud-ink) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--hud-ink) 40%, transparent);
+  }
+
+  .dim-chip {
+    opacity: 0.7;
+  }
+
+  .inject-bytes {
+    font-family: var(--hud-font-data);
+    font-size: 11px;
+    color: var(--hud-ink);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+
+  .countdown-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    pointer-events: none;
+    padding: 6px 8px;
+    font-family: var(--hud-font-head);
+    font-size: 18px;
+    color: color-mix(in srgb, var(--hud-ink) 80%, transparent);
+    text-shadow: 1px 1px 0 var(--hud-panel);
   }
 
   .card-meta {
