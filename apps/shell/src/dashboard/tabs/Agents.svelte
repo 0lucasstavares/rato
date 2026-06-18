@@ -8,6 +8,7 @@
   let observability = $state<AgentObservabilityDto>(fallbackObservability());
   let runs = $state<AgentRunDto[]>([]);
   let stop: (() => void) | null = null;
+  const repoApi = "https://api.github.com/repos/0lucasstavares/rato";
 
   const queueLabels: Array<{ key: keyof AgentObservabilityDto["queue"]; label: string }> = [
     { key: "ready", label: "READY" },
@@ -80,14 +81,121 @@
     };
   }
 
+  interface GitHubLabel {
+    name: string;
+  }
+
+  interface GitHubIssue {
+    labels: GitHubLabel[];
+    pull_request?: unknown;
+  }
+
+  interface GitHubPullRequest {
+    number: number;
+  }
+
+  interface GitHubRun {
+    name: string;
+    status: string;
+    conclusion: string | null;
+    event: string;
+    created_at: string;
+    updated_at: string;
+    html_url: string;
+  }
+
+  function hasLabel(issue: GitHubIssue, name: string): boolean {
+    return issue.labels.some((label) => label.name === name);
+  }
+
+  function workflowStatus(run: GitHubRun | undefined): string {
+    if (!run) return "unknown";
+    if (["queued", "in_progress", "requested", "waiting", "pending"].includes(run.status)) {
+      return "running";
+    }
+    if (run.status === "completed" && run.conclusion === "success") return "passed";
+    if (run.status === "completed" && run.conclusion === "cancelled") return "idle";
+    if (run.status === "completed" && run.conclusion) return "failed";
+    return "unknown";
+  }
+
+  function workflowResult(run: GitHubRun | undefined): string | null {
+    if (!run) return "no public run found";
+    if (run.status !== "completed") return `${run.status} via ${run.event}`;
+    return `${run.conclusion ?? "completed"} via ${run.event}`;
+  }
+
+  function latestByWorkflow(runs: GitHubRun[], workflow: string): GitHubRun | undefined {
+    return runs.find((run) => run.name === workflow);
+  }
+
+  function withGitHubRuns(base: AgentObservabilityDto, runs: GitHubRun[]): AgentWorkflowDto[] {
+    return base.workflows.map((workflow) => {
+      const run = latestByWorkflow(runs, workflow.workflow);
+      return {
+        ...workflow,
+        status: workflowStatus(run),
+        last_run_ms: run ? Date.parse(run.updated_at || run.created_at) : null,
+        last_result: workflowResult(run),
+      };
+    });
+  }
+
+  async function fetchJson<T>(url: string): Promise<T> {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub API ${response.status} for ${url}`);
+    }
+    return (await response.json()) as T;
+  }
+
+  async function githubObservability(): Promise<AgentObservabilityDto> {
+    const base = fallbackObservability();
+    const [issues, pulls, runsResponse] = await Promise.all([
+      fetchJson<GitHubIssue[]>(`${repoApi}/issues?state=open&per_page=100`),
+      fetchJson<GitHubPullRequest[]>(`${repoApi}/pulls?state=open&per_page=50`),
+      fetchJson<{ workflow_runs: GitHubRun[] }>(`${repoApi}/actions/runs?per_page=50`),
+    ]);
+
+    const realIssues = issues.filter((issue) => !issue.pull_request);
+    const agentRuns = runsResponse.workflow_runs.filter((run) => run.name.startsWith("agent-"));
+    const newestAgentRun = agentRuns[0];
+    const newestAgentRunMs = newestAgentRun ? Date.parse(newestAgentRun.created_at) : 0;
+    const recentlyActive = newestAgentRunMs > Date.now() - 8 * 60 * 60 * 1000;
+
+    return {
+      autonomy: recentlyActive ? "on" : "unknown",
+      source: "github-public",
+      last_updated_ms: Date.now(),
+      queue: {
+        ready: realIssues.filter((issue) => hasLabel(issue, "ai:ready")).length,
+        working: realIssues.filter((issue) => hasLabel(issue, "ai:working")).length,
+        review: realIssues.filter((issue) => hasLabel(issue, "ai:review")).length,
+        merge: realIssues.filter((issue) => hasLabel(issue, "ai:merge")).length,
+        blocked: realIssues.filter((issue) => hasLabel(issue, "ai:blocked")).length,
+        open_prs: pulls.length,
+      },
+      workflows: withGitHubRuns(base, agentRuns),
+    };
+  }
+
   async function load() {
     const fallback = fallbackObservability();
-    observability = await optionalRpc<AgentObservabilityDto>("agents.observability", null, fallback);
+    const rpcData = await optionalRpc<AgentObservabilityDto>("agents.observability", null, fallback);
+    if (rpcData.source !== "configured") {
+      observability = rpcData;
+    } else {
+      observability = await githubObservability().catch(() => rpcData);
+    }
     runs = await optionalRpc<AgentRunDto[]>("workbench.runs", { n: 8 }, []);
   }
 
   onMount(() => {
-    stop = poll(load, 5000);
+    stop = poll(load, 30000);
   });
 
   onDestroy(() => {
@@ -102,7 +210,7 @@
   }
 
   function autonomyState(value: string): "on" | "warn" | "err" | "off" {
-    if (value === "on") return "on";
+    if (value === "on" || value.startsWith("on")) return "on";
     if (value === "off") return "off";
     return "warn";
   }
@@ -201,13 +309,13 @@
       {/if}
     </HudPanel>
 
-    <HudPanel title="LIVE BRIDGE">
+    <HudPanel title="LIVE SOURCE">
       <div class="bridge">
-        <div class="bridge-title">Expected RPC</div>
-        <code>agents.observability</code>
+        <div class="bridge-title">GitHub observability</div>
+        <code>{observability.source}</code>
         <p>
-          The tab is already wired for a daemon/GitHub bridge. Until that method exists, it renders
-          the configured autonomous chain and local workbench runs.
+          The browser view reads public GitHub issues, pull requests, and Actions runs directly.
+          A future daemon RPC can replace this with authenticated repo variables and richer logs.
         </p>
       </div>
     </HudPanel>
