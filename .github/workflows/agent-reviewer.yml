@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   reviewer:
+    if: github.event_name != 'schedule' || vars.RATO_AUTONOMY == 'on'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -82,3 +82,13 @@ powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Rol
 The provider wrapper chooses OpenAI/Codex first when `OPENAI_API_KEY` or
 `CHATGPT_API_KEY` is available, otherwise Anthropic when `ANTHROPIC_API_KEY` is
 available. Set `RATO_AGENT_PROVIDER=anthropic` to force Claude Code.
+
+## Turn Autonomy On/Off
+
+Two manual workflows control scheduled autonomy:
+
+- `autonomy-on`: sets repository variable `RATO_AUTONOMY=on`.
+- `autonomy-off`: sets repository variable `RATO_AUTONOMY=off`.
+
+Scheduled manager, worker, reviewer, and merger loops only run when
+`RATO_AUTONOMY` is `on`. Manual dispatch still works while autonomy is off.
