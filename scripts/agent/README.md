@@ -25,9 +25,8 @@ $env:GH_TOKEN = "<fine-grained-token-for-this-repo>"
 
 The GitHub Actions workflows expect these repository secrets:
 
-- `RATO_AGENT_COMMAND`: optional command line for the agent wrapper to execute.
-  It must read the prompt from stdin. If omitted, workflows print the assembled
-  prompt and exit successfully.
+- `RATO_AGENT_COMMAND`: command line for the agent wrapper to execute. It must
+  read the prompt from stdin.
 - `RATO_GH_TOKEN`: optional fine-grained token. If omitted, workflows fall back
   to `github.token`.
 - `RATO_AGENT_PROVIDER`: optional provider preference: `openai`, `anthropic`,
