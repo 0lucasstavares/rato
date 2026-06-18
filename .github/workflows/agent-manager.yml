@@ -30,11 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [openai, anthropic]
+        harness: [codex, claude-code]
     timeout-minutes: 30
-    name: manager (${{ matrix.provider }})
+    name: manager (${{ matrix.harness }})
     concurrency:
-      group: agent-manager-${{ matrix.provider }}
+      group: agent-manager-${{ matrix.harness }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -45,8 +45,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
           RATO_AGENT_COMMAND: pwsh ./scripts/agent/run-provider-agent.ps1
-          RATO_AGENT_PROVIDER: ${{ matrix.provider }}
-          RATO_AGENT_ID: ${{ matrix.provider }}-manager
+          RATO_AGENT_HARNESS: ${{ matrix.harness }}
+          RATO_AGENT_PROVIDER: ${{ matrix.harness }}
+          RATO_AGENT_ID: ${{ matrix.harness }}-manager
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

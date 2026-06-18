@@ -82,9 +82,9 @@ $env:RATO_AGENT_COMMAND = "rato-agent-wrapper"
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role worker
 ```
 
-The GitHub Actions role workflows run both providers through a matrix:
-`openai` for Codex and `anthropic` for Claude Code. The provider wrapper still
-supports local `auto` mode, which chooses OpenAI/Codex first when
+The GitHub Actions role workflows run both harnesses through a matrix:
+`codex` for Codex CLI and `claude-code` for Claude Code CLI. The provider
+wrapper still supports local `auto` mode, which chooses OpenAI/Codex first when
 `OPENAI_API_KEY` or `CHATGPT_API_KEY` is available, otherwise Anthropic when
 `ANTHROPIC_API_KEY` is available. Set `RATO_AGENT_PROVIDER=anthropic` to force
 Claude Code in a local or custom run.

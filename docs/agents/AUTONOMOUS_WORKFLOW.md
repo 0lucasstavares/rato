@@ -116,7 +116,7 @@ is advisory context for agents, not the current deterministic gate. The current
 system intentionally allows agents to merge green reviewed PRs without waiting
 for human review.
 
-## Provider Selection
+## Harness Selection
 
 Actions set `RATO_AGENT_COMMAND` to:
 
@@ -124,21 +124,21 @@ Actions set `RATO_AGENT_COMMAND` to:
 pwsh ./scripts/agent/run-provider-agent.ps1
 ```
 
-The role workflows run a provider matrix:
+The role workflows run a harness matrix:
 
-- `openai`: Codex through `@openai/codex`
-- `anthropic`: Claude Code through `@anthropic-ai/claude-code`
+- `codex`: Codex CLI through `@openai/codex`
+- `claude-code`: Claude Code CLI through `@anthropic-ai/claude-code`
 
-Each matrix job sets `RATO_AGENT_PROVIDER` and `RATO_AGENT_ID`, so prompts,
-logs, and worker branches identify which provider acted. Worker branches include
-the provider, for example:
+Each matrix job sets `RATO_AGENT_HARNESS` and `RATO_AGENT_ID`, so prompts, logs,
+and worker branches identify which harness acted. Worker branches include the
+harness, for example:
 
 ```text
-ai/worker/openai-<run-id>-<attempt>
-ai/worker/anthropic-<run-id>-<attempt>
+ai/worker/codex-<run-id>-<attempt>
+ai/worker/claude-code-<run-id>-<attempt>
 ```
 
-When `RATO_AGENT_PROVIDER=auto` is used outside the matrix, the provider wrapper
+When `RATO_AGENT_HARNESS=auto` is used outside the matrix, the harness wrapper
 chooses:
 
 1. OpenAI/Codex when `OPENAI_API_KEY` or `CHATGPT_API_KEY` is present.
@@ -172,7 +172,7 @@ The `Agents` tab reads public GitHub data directly in browser mode:
 - issue queue counts
 - open PR count
 - recent `agent-*` workflow status
-- inferred model usage in a scrollable feed
+- harness usage in a scrollable feed, with failed quota/limit-risk rows red
 
 If a future daemon RPC named `agents.observability` is available, the tab can use
 that richer source instead.

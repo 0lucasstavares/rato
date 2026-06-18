@@ -6,7 +6,7 @@
   import type { AgentObservabilityDto, AgentWorkflowDto } from "../../lib/types";
 
   let observability = $state<AgentObservabilityDto>(fallbackObservability());
-  let modelUsage = $state<ModelUsageRow[]>([]);
+  let harnessUsage = $state<HarnessUsageRow[]>([]);
   let stop: (() => void) | null = null;
   const repoApi = "https://api.github.com/repos/0lucasstavares/rato";
 
@@ -95,6 +95,7 @@
   }
 
   interface GitHubRun {
+    id: number;
     name: string;
     status: string;
     conclusion: string | null;
@@ -104,9 +105,19 @@
     html_url: string;
   }
 
-  interface ModelUsageRow {
+  interface GitHubJob {
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    html_url: string;
+  }
+
+  interface HarnessUsageRow {
     workflow: string;
-    model: string;
+    harness: string;
     status: string;
     result: string;
     event: string;
@@ -139,23 +150,67 @@
     return runs.find((run) => run.name === workflow);
   }
 
-  function modelForWorkflow(workflow: string): string {
-    if (workflow === "agent-reviewer") return "gpt-5.1";
-    if (workflow === "agent-manager") return "gpt-5-mini";
-    if (workflow === "agent-worker" || workflow === "agent-merger") return "gpt-5.1-codex-max";
-    return "configured";
+  function harnessFromJob(jobName: string): string {
+    const lower = jobName.toLowerCase();
+    if (lower.includes("codex")) return "codex";
+    if (lower.includes("claude-code")) return "claude-code";
+    if (lower.includes("anthropic")) return "claude-code";
+    if (lower.includes("openai")) return "codex";
+    return "agent";
   }
 
-  function usageRowsFromRuns(runs: GitHubRun[]): ModelUsageRow[] {
+  function resultForJob(job: GitHubJob): string {
+    if (job.status !== "completed") return job.status;
+    if (job.conclusion === "failure" && harnessFromJob(job.name) === "codex") {
+      return "failed / check quota";
+    }
+    if (job.conclusion === "failure" && harnessFromJob(job.name) === "claude-code") {
+      return "failed / check quota";
+    }
+    return job.conclusion ?? "completed";
+  }
+
+  function fallbackUsageRowsFromRuns(runs: GitHubRun[]): HarnessUsageRow[] {
     return runs.slice(0, 30).map((run) => ({
       workflow: run.name,
-      model: modelForWorkflow(run.name),
+      harness: "workflow",
       status: run.status,
       result: run.conclusion ?? run.status,
       event: run.event,
       updated_ms: Date.parse(run.updated_at || run.created_at),
       url: run.html_url,
     }));
+  }
+
+  async function usageRowsFromRuns(runs: GitHubRun[]): Promise<HarnessUsageRow[]> {
+    const jobResponses = await Promise.all(
+      runs.slice(0, 12).map(async (run) => {
+        try {
+          const response = await fetchJson<{ jobs: GitHubJob[] }>(`${repoApi}/actions/runs/${run.id}/jobs?per_page=20`);
+          return { run, jobs: response.jobs };
+        } catch {
+          return { run, jobs: [] as GitHubJob[] };
+        }
+      }),
+    );
+
+    const rows = jobResponses.flatMap(({ run, jobs }) => {
+      const agentJobs = jobs.filter((job) => job.name.toLowerCase().includes("codex") || job.name.toLowerCase().includes("claude-code"));
+      if (agentJobs.length === 0) {
+        return fallbackUsageRowsFromRuns([run]);
+      }
+      return agentJobs.map((job) => ({
+        workflow: run.name,
+        harness: harnessFromJob(job.name),
+        status: job.status,
+        result: resultForJob(job),
+        event: run.event,
+        updated_ms: Date.parse(job.completed_at || job.started_at || run.updated_at || run.created_at),
+        url: job.html_url || run.html_url,
+      }));
+    });
+
+    return rows.slice(0, 30);
   }
 
   function withGitHubRuns(base: AgentObservabilityDto, runs: GitHubRun[]): AgentWorkflowDto[] {
@@ -192,7 +247,7 @@
 
     const realIssues = issues.filter((issue) => !issue.pull_request);
     const agentRuns = runsResponse.workflow_runs.filter((run) => run.name.startsWith("agent-"));
-    modelUsage = usageRowsFromRuns(agentRuns);
+    harnessUsage = await usageRowsFromRuns(agentRuns);
     const newestAgentRun = agentRuns[0];
     const newestAgentRunMs = newestAgentRun ? Date.parse(newestAgentRun.created_at) : 0;
     const recentlyActive = newestAgentRunMs > Date.now() - 8 * 60 * 60 * 1000;
@@ -244,11 +299,15 @@
     return "warn";
   }
 
-  function usageState(row: ModelUsageRow): "on" | "warn" | "err" | "off" {
+  function usageState(row: HarnessUsageRow): "on" | "warn" | "err" | "off" {
     if (row.status !== "completed") return "on";
     if (row.result === "success") return "on";
     if (row.result === "cancelled" || row.result === "skipped") return "warn";
     return "err";
+  }
+
+  function isQuotaRisk(row: HarnessUsageRow): boolean {
+    return row.result.includes("quota") || row.result.includes("limit") || row.result === "failure";
   }
 
   function workflowAge(workflow: AgentWorkflowDto): string {
@@ -321,16 +380,16 @@
   </HudPanel>
 
   <section class="bottom">
-    <HudPanel title="MODEL USAGE">
-      {#if modelUsage.length === 0}
+    <HudPanel title="HARNESS USAGE">
+      {#if harnessUsage.length === 0}
         <div class="empty">no public agent workflow usage loaded yet</div>
       {:else}
         <div class="usage-scroll">
-          {#each modelUsage as row (`${row.workflow}-${row.updated_ms}-${row.url}`)}
-            <div class="usage-row">
+          {#each harnessUsage as row (`${row.workflow}-${row.harness}-${row.updated_ms}-${row.url}`)}
+            <div class="usage-row" class:quota-risk={isQuotaRisk(row)}>
               <div class="usage-main">
                 <span class="mono workflow-name">{row.workflow}</span>
-                <span class="model-name">{row.model}</span>
+                <span class="harness-name">{row.harness}</span>
               </div>
               <StatusChip label={row.result.toUpperCase()} state={usageState(row)} />
               <span class="mono event-name">{row.event}</span>
@@ -346,7 +405,7 @@
         <div class="bridge-title">GitHub observability</div>
         <code>{observability.source}</code>
         <p>
-          The browser view reads public GitHub issues, pull requests, and Actions runs directly.
+          The browser view reads public GitHub issues, pull requests, Actions runs, and matrix jobs directly.
           A future daemon RPC can replace this with authenticated repo variables and richer logs.
         </p>
       </div>
@@ -518,6 +577,20 @@
     border-bottom: 1px solid color-mix(in srgb, var(--hud-ink) 12%, transparent);
   }
 
+  .usage-row.quota-risk {
+    background: color-mix(in srgb, var(--hud-danger) 16%, transparent);
+    border: 1px solid var(--hud-danger);
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .usage-row.quota-risk .harness-name,
+  .usage-row.quota-risk .workflow-name,
+  .usage-row.quota-risk .event-name,
+  .usage-row.quota-risk .age-cell {
+    color: var(--hud-danger);
+  }
+
   .usage-main {
     min-width: 0;
     display: flex;
@@ -525,7 +598,7 @@
     gap: 2px;
   }
 
-  .model-name {
+  .harness-name {
     font-family: var(--hud-font-body);
     font-size: 13px;
     color: var(--hud-ink);

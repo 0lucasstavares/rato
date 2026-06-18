@@ -33,7 +33,7 @@ function Try-CommandText($ScriptBlock) {
     }
 }
 
-function Get-ConfiguredProviderSummary {
+function Get-ConfiguredHarnessSummary {
     $providers = @()
     if ($env:OPENAI_API_KEY) {
         $providers += "OPENAI_API_KEY configured"
@@ -51,7 +51,10 @@ function Get-ConfiguredProviderSummary {
         $providers += "No provider API keys detected in environment"
     }
 
-    $preferred = $env:RATO_AGENT_PROVIDER
+    $preferred = $env:RATO_AGENT_HARNESS
+    if (-not $preferred) {
+        $preferred = $env:RATO_AGENT_PROVIDER
+    }
     if (-not $preferred) {
         $preferred = "auto"
     }
@@ -85,7 +88,7 @@ function Get-ConfiguredProviderSummary {
         "Audio model: $audioModel"
     )
 
-    return "Preferred provider: $preferred`n" + ($providers -join "`n") + "`n" + ($models -join "`n")
+    return "Preferred harness: $preferred`n" + ($providers -join "`n") + "`n" + ($models -join "`n")
 }
 
 function Get-FirstCommandToken($CommandLine) {
@@ -170,18 +173,21 @@ function Publish-WorkerChanges {
     Write-Host "Worker produced repository changes:"
     $status | ForEach-Object { Write-Host $_ }
 
-    $provider = Get-SafeRefSegment $env:RATO_AGENT_PROVIDER
-    if ($provider -eq "local" -or $provider -eq "auto") {
-        $provider = Get-SafeRefSegment $env:RATO_AGENT_ID
+    $harness = Get-SafeRefSegment $env:RATO_AGENT_HARNESS
+    if ($harness -eq "local") {
+        $harness = Get-SafeRefSegment $env:RATO_AGENT_PROVIDER
     }
-    if ($provider -eq "local") {
-        $provider = "agent"
+    if ($harness -eq "local" -or $harness -eq "auto") {
+        $harness = Get-SafeRefSegment $env:RATO_AGENT_ID
+    }
+    if ($harness -eq "local") {
+        $harness = "agent"
     }
     $runId = Get-SafeRefSegment $env:GITHUB_RUN_ID
     $runAttempt = Get-SafeRefSegment $env:GITHUB_RUN_ATTEMPT
-    $branch = "ai/worker/$provider-$runId-$runAttempt"
+    $branch = "ai/worker/$harness-$runId-$runAttempt"
     if ($runId -eq "local") {
-        $branch = "ai/worker/$provider-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        $branch = "ai/worker/$harness-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     }
 
     Invoke-Checked "git" @("config", "user.name", "rato-agent")
@@ -195,8 +201,8 @@ function Publish-WorkerChanges {
         return
     }
 
-    $title = "Autonomous $provider worker run $runId"
-    $commitMessage = "feat(agent): autonomous $provider worker changes ($runId)"
+    $title = "Autonomous $harness worker run $runId"
+    $commitMessage = "feat(agent): autonomous $harness worker changes ($runId)"
     Invoke-Checked "git" @("commit", "-m", $commitMessage)
     Invoke-Checked "git" @("push", "--set-upstream", "origin", $branch)
 
@@ -212,7 +218,7 @@ The worker harness committed the resulting diff and opened this PR automatically
 ## Agent Notes
 
 - Branch: `$branch`
-- Provider: `$provider`
+- Harness: `$harness`
 - Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
 "@
 
@@ -339,8 +345,11 @@ $constitution = Read-RepoFile "docs\agents\CONSTITUTION.md"
 $overview = Read-RepoFile "docs\agents\README.md"
 $rolePrompt = Read-RepoFile "docs\agents\roles\$Role.md"
 $rootReadme = Read-RepoFile "README.md"
-$providerSummary = Get-ConfiguredProviderSummary
+$providerSummary = Get-ConfiguredHarnessSummary
 $agentIdentity = $env:RATO_AGENT_ID
+if (-not $agentIdentity) {
+    $agentIdentity = $env:RATO_AGENT_HARNESS
+}
 if (-not $agentIdentity) {
     $agentIdentity = $env:RATO_AGENT_PROVIDER
 }
@@ -386,7 +395,7 @@ $rolePrompt
 
 $rootReadme
 
-## Provider Environment
+## Harness Environment
 
 ```text
 $providerSummary
