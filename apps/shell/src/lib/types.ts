@@ -145,6 +145,35 @@ export interface AgentRunDto {
   diffstat: unknown | null;
 }
 
+export interface AgentQueueDto {
+  ready: number;
+  working: number;
+  review: number;
+  merge: number;
+  blocked: number;
+  open_prs: number;
+}
+
+export interface AgentWorkflowDto {
+  role: string;
+  workflow: string;
+  status: "idle" | "running" | "passed" | "failed" | "blocked" | "unknown" | string;
+  trigger: string;
+  cadence: string;
+  last_run_ms: number | null;
+  last_result: string | null;
+  next_action: string;
+  handoff: string;
+}
+
+export interface AgentObservabilityDto {
+  autonomy: "on" | "off" | "unknown" | string;
+  source: "live" | "configured" | string;
+  last_updated_ms: number;
+  queue: AgentQueueDto;
+  workflows: AgentWorkflowDto[];
+}
+
 /** Wire DTO mirroring rat-proto ApprovalDto / rat_store::rows::Approval */
 export interface ApprovalDto {
   id: string;
@@ -230,3 +259,4 @@ export interface DotfileEditDto {
   reverted_by: string | null;
   meta: Record<string, unknown>;
 }
+

@@ -4,6 +4,7 @@
   import Sensors from "./tabs/Sensors.svelte";
   import Settings from "./tabs/Settings.svelte";
   import Pushback from "./tabs/Pushback.svelte";
+  import Agents from "./tabs/Agents.svelte";
   import Workbench from "./tabs/Workbench.svelte";
   import Approvals from "./tabs/Approvals.svelte";
   import Pins from "./tabs/Pins.svelte";
@@ -17,9 +18,9 @@
 <div class="dash hud-grunge">
   <header>
     <span class="logo">RATO</span>
-    <span class="sub">developer companion · M7 shell</span>
+    <span class="sub">developer companion ?? M7 shell</span>
   </header>
-  <TabBar tabs={["Now", "Calendar", "Metrics", "Memory", "Pushback", "Workbench", "Approvals", "Pins", "Sensors", "Settings"]} bind:active />
+  <TabBar tabs={["Now", "Calendar", "Metrics", "Memory", "Pushback", "Agents", "Workbench", "Approvals", "Pins", "Sensors", "Settings"]} bind:active />
   <main>
     {#if active === "Now"}
       <Now />
@@ -31,6 +32,8 @@
       <Memory />
     {:else if active === "Pushback"}
       <Pushback />
+    {:else if active === "Agents"}
+      <Agents />
     {:else if active === "Workbench"}
       <Workbench />
     {:else if active === "Approvals"}
@@ -94,3 +97,4 @@
     user-select: none;
   }
 </style>
+

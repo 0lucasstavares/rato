@@ -6,12 +6,12 @@ and a Tauri shell (`rato-shell`) showing a 3D rat avatar and a dashboard.
 
 ## Prerequisites
 
-- Linux with a desktop session (tested: Ubuntu GNOME on Wayland — the shell runs via XWayland).
+- Linux with a desktop session (tested: Ubuntu GNOME on Wayland ??? the shell runs via XWayland).
 - System packages (one-time, needs sudo):
   `sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev pkg-config build-essential tmux`
-- Rust toolchain (rustup) and Node ≥ 20 on PATH:
+- Rust toolchain (rustup) and Node ??? 20 on PATH:
   `export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"`
-- A Secret Service keyring (GNOME Keyring — present on stock Ubuntu).
+- A Secret Service keyring (GNOME Keyring ??? present on stock Ubuntu).
 
 ## Build
 
@@ -64,6 +64,20 @@ npm run dev
 npm run tauri dev
 ```
 
+On Windows PowerShell, run the same shell UI from the repo checkout:
+
+```powershell
+Set-Location .\apps\shell
+npm.cmd install
+npm.cmd run check
+npm.cmd run build
+npm.cmd run dev -- --host 127.0.0.1 --port 19773
+```
+
+Then open `http://127.0.0.1:19773/dashboard.html`. The dashboard renders without a running
+daemon by falling back to configured observability data; live values appear when the Tauri shell
+can reach `ratd` through its RPC proxy.
+
 Optional M5 hardware backends are feature-gated. The default build is deterministic and uses
 fake/null screen/OCR backends. Operator live-smoke build:
 
@@ -79,7 +93,7 @@ cp packaging/systemd/ratd.service packaging/systemd/rato-shell.service ~/.config
 systemctl --user daemon-reload
 systemctl --user enable --now ratd rato-shell
 
-# 2. import LLM API keys (reads keys/antr_k.txt, open_k.txt, openr_k.txt → Secret Service;
+# 2. import LLM API keys (reads keys/antr_k.txt, open_k.txt, openr_k.txt ??? Secret Service;
 #    never prints values) and pick the default provider
 ./target/release/rat setup --keys-dir ~/rato/keys --provider anthropic
 
@@ -89,7 +103,7 @@ systemctl --user restart ratd rato-shell
 ./target/release/rat llm-status
 ```
 
-Optional: shell-command observations come from shell hooks — add to your `~/.bashrc`:
+Optional: shell-command observations come from shell hooks ??? add to your `~/.bashrc`:
 `source ~/rato/packaging/shell/rat-init.sh`
 
 ## Configuration
@@ -107,7 +121,7 @@ slow_tick_s = 300           # LLM review cadence
 
 Notes:
 - Embeddings always use OpenAI (`text-embedding-3-small`). If the key is missing or the
-  account rejects the model, retrieval silently degrades to full-text-only — check
+  account rejects the model, retrieval silently degrades to full-text-only ??? check
   `rat llm-status` (`embedding_enabled`).
 - Daemon flags: `ratd --no-sensors` (no capture), `ratd --no-critic` (no LLM calls).
 
@@ -122,7 +136,7 @@ Notes:
 | Search memory | `rat search "query"` |
 | Pushbacks | `rat pushbacks` / `rat pushbacks feedback <id> <useful|dismiss|snooze>` |
 | Workbench tasks | `rat task start --project <repo> --title <t> [--adapter fakeagent\|claude-code\|codex] [--executor local\|docker --docker-image <image>]`; `rat task list`; `rat task tail <run_id>` |
-| Merge back | `rat task merge-back <run_id>` → creates an approval; review and approve it |
+| Merge back | `rat task merge-back <run_id>` ??? creates an approval; review and approve it |
 | Approvals | `rat approvals`; `rat approvals decide <id> approve\|deny [--note <n>] [--slug <s>]` |
 | Capture pins | `rat pins`; `rat pins pin-recent --minutes 5 --media screen`; `rat pins unpin <id>` |
 | Voice | `rat voice status`; `rat voice say "hello"`; `rat utterances` |
@@ -133,15 +147,15 @@ Notes:
 
 A workbench task runs an agent adapter inside an isolated git worktree (branch `rato/<slug>`
 under `~/.local/share/rato/worktrees/<repo-hash>/<task-id>/`) in a dedicated `tmux -L rato`
-window. Agent commits stay on the `rato/*` branch — the live repo is never touched until you
+window. Agent commits stay on the `rato/*` branch ??? the live repo is never touched until you
 approve a merge-back.
 
 ```bash
 rat task start --project ~/code/myproj --title "add retry logic"   # default adapter: fakeagent
 rat task start --project ~/code/myproj --title "fix tests" --adapter codex --executor docker --docker-image rato-codex:latest
-rat task list                                                      # running → done
+rat task list                                                      # running ??? done
 rat task tail <run_id>                                             # captured agent output
-rat task merge-back <run_id>                                       # → R2 approval (slug = last 6 of id)
+rat task merge-back <run_id>                                       # ??? R2 approval (slug = last 6 of id)
 rat approvals                                                      # see it pending
 rat approvals decide <approval_id> approve                         # git merge --no-ff into the live repo
 #   ...or: rat approvals decide <approval_id> deny                 # live repo untouched, branch kept
@@ -211,3 +225,4 @@ The dashboard uses additive RPCs for newer M5/M6 fields (`ring.status`, `retenti
 | `~/.local/state/rato/ring/` | ephemeral encrypted capture ring |
 | `/run/user/$UID/rato/ratd.sock` | daemon RPC socket (0600) |
 | Secret Service `rato/openai|anthropic|openrouter|pin-key` | API keys and the persistent pin key |
+
