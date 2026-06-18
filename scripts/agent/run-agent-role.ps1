@@ -98,35 +98,36 @@ function Get-FirstCommandToken($CommandLine) {
     return $token.Content.Trim("'`"")
 }
 
+function Split-CommandLine($CommandLine) {
+    $parseErrors = $null
+    $tokens = [System.Management.Automation.PSParser]::Tokenize($CommandLine, [ref]$parseErrors)
+    if ($parseErrors) {
+        throw "Failed to parse RATO_AGENT_COMMAND '$CommandLine'."
+    }
+    $commandTokens = @($tokens | Where-Object {
+        $_.Type -in @("Command", "CommandArgument", "String", "Number")
+    })
+    if (-not $commandTokens) {
+        throw "RATO_AGENT_COMMAND is empty."
+    }
+
+    return @{
+        Command = $commandTokens[0].Content.Trim("'`"")
+        Arguments = @($commandTokens | Select-Object -Skip 1 | ForEach-Object { $_.Content.Trim("'`"") })
+    }
+}
+
 function Invoke-AgentCommand($CommandLine, $Prompt) {
-    $commandName = Get-FirstCommandToken $CommandLine
+    $parsedCommand = Split-CommandLine $CommandLine
+    $commandName = $parsedCommand.Command
     if (-not $commandName -or -not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
         Write-Warning "RATO_AGENT_COMMAND '$CommandLine' was not found on PATH; printing prompt only."
         Write-Output $Prompt
         return 0
     }
 
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    if ($IsWindows -or $env:OS -eq "Windows_NT") {
-        $psi.FileName = "powershell.exe"
-        $escaped = $CommandLine.Replace('"', '\"')
-        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"$escaped`""
-    }
-    else {
-        $psi.FileName = "/bin/bash"
-        $escaped = $CommandLine.Replace("'", "'\''")
-        $psi.Arguments = "-lc '$escaped'"
-    }
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $false
-    $psi.RedirectStandardError = $false
-    $psi.UseShellExecute = $false
-
-    $process = [System.Diagnostics.Process]::Start($psi)
-    $process.StandardInput.Write($Prompt)
-    $process.StandardInput.Close()
-    $process.WaitForExit()
-    return $process.ExitCode
+    $Prompt | & $commandName @($parsedCommand.Arguments)
+    return $LASTEXITCODE
 }
 
 $constitution = Read-RepoFile "docs\agents\CONSTITUTION.md"
