@@ -54,6 +54,9 @@ switch ($provider.ToLowerInvariant()) {
         if (-not $env:OPENAI_API_KEY) {
             throw "RATO_AGENT_PROVIDER=openai but OPENAI_API_KEY or CHATGPT_API_KEY is not configured."
         }
+        $env:CODEX_API_KEY = $env:OPENAI_API_KEY
+        $env:OPENAI_KEY = $env:OPENAI_API_KEY
+        $env:OPENAI_API_TOKEN = $env:OPENAI_API_KEY
         $model = $env:RATO_AGENT_MODEL
         if (-not $model) {
             $model = "gpt-5.1-codex-max"
