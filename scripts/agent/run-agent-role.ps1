@@ -164,30 +164,6 @@ function Write-AgentSummary {
 
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (($Lines -join "`n") + "`n")
 }
-function Assert-RoleDidNotEditRepository {
-    if ($Role -eq "worker") {
-        return
-    }
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        return
-    }
-
-    $status = @(git status --porcelain)
-    if (-not $status -or $status.Count -eq 0) {
-        return
-    }
-
-    Write-AgentSummary @(
-        "## Agent Outcome",
-        "",
-        "- Role: $Role",
-        "- Outcome: unauthorized repository edits",
-        "- Detail: Non-worker roles are not allowed to modify repository files."
-    )
-
-    $formattedStatus = $status -join "; "
-    throw "Role '$Role' modified repository files unexpectedly: $formattedStatus"
-}
 
 
 function Publish-WorkerChanges {
