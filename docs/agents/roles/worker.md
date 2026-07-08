@@ -11,7 +11,7 @@ Inputs:
 
 Allowed actions:
 
-- Create a branch.
+- Create a branch named `ai/issue-<number>-short-slug` that keeps the target issue number visible.
 - Edit code, tests, docs, and project config needed for the issue.
 - Run local verification commands.
 - Open a pull request.
