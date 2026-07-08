@@ -153,9 +153,26 @@ function Get-SafeRefSegment($Value) {
     return $safe
 }
 
+function Write-AgentSummary {
+    param(
+        [string[]]$Lines
+    )
+
+    if (-not $env:GITHUB_STEP_SUMMARY) {
+        return
+    }
+
+    Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (($Lines -join "`n") + "`n")
+}
+
+
 function Publish-WorkerChanges {
     if ($Role -ne "worker") {
-        return
+        return @{
+            Outcome = "not-worker"
+            Detail = "Role is not worker."
+            RequeuedManager = $false
+        }
     }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw "Worker changed files cannot be published because git is unavailable."
@@ -167,7 +184,20 @@ function Publish-WorkerChanges {
     $status = @(git status --porcelain)
     if (-not $status -or $status.Count -eq 0) {
         Write-Host "Worker produced no repository diff; no PR to open."
-        return
+        $detail = "Worker produced no repository diff; no PR was opened."
+        Write-AgentSummary @(
+            "## Agent Outcome",
+            "",
+            "- Role: worker",
+            "- Outcome: no repository diff",
+            "- Harness: $($env:RATO_AGENT_HARNESS)",
+            "- Detail: $detail"
+        )
+        return @{
+            Outcome = "no-diff"
+            Detail = $detail
+            RequeuedManager = $false
+        }
     }
 
     Write-Host "Worker produced repository changes:"
@@ -198,7 +228,20 @@ function Publish-WorkerChanges {
     $staged = @(git diff --cached --name-only)
     if (-not $staged -or $staged.Count -eq 0) {
         Write-Host "Worker diff disappeared after staging filters; no PR to open."
-        return
+        $detail = "Worker changes disappeared after staging filters; no PR was opened."
+        Write-AgentSummary @(
+            "## Agent Outcome",
+            "",
+            "- Role: worker",
+            "- Outcome: empty staged diff",
+            "- Harness: $($env:RATO_AGENT_HARNESS)",
+            "- Detail: $detail"
+        )
+        return @{
+            Outcome = "empty-staged-diff"
+            Detail = $detail
+            RequeuedManager = $false
+        }
     }
 
     $title = "Autonomous $harness worker run $runId"
@@ -225,7 +268,20 @@ The worker harness committed the resulting diff and opened this PR automatically
     $existing = @(gh pr list --head $branch --state open --json number --jq ".[].number")
     if ($existing -and $existing.Count -gt 0) {
         Write-Host "PR already exists for ${branch}: #$($existing[0])"
-        return
+        $detail = "PR already exists for branch ${branch}: #$($existing[0])."
+        Write-AgentSummary @(
+            "## Agent Outcome",
+            "",
+            "- Role: worker",
+            "- Outcome: existing PR reused",
+            "- Harness: $($env:RATO_AGENT_HARNESS)",
+            "- Detail: $detail"
+        )
+        return @{
+            Outcome = "existing-pr"
+            Detail = $detail
+            RequeuedManager = $false
+        }
     }
 
     Invoke-Checked "gh" @(
@@ -240,6 +296,21 @@ The worker harness committed the resulting diff and opened this PR automatically
         "--head",
         $branch
     )
+    $detail = "Worker published branch $branch and opened a pull request."
+    Write-AgentSummary @(
+        "## Agent Outcome",
+        "",
+        "- Role: worker",
+        "- Outcome: pull request opened",
+        "- Harness: $($env:RATO_AGENT_HARNESS)",
+        "- Branch: $branch",
+        "- Detail: $detail"
+    )
+    return @{
+        Outcome = "opened-pr"
+        Detail = $detail
+        RequeuedManager = $false
+    }
 }
 
 function Test-CheckRollupGreen($Rollup) {
@@ -501,6 +572,8 @@ if ($agentExitCode -ne 0) {
     exit $agentExitCode
 }
 
-Publish-WorkerChanges
+$publishResult = Publish-WorkerChanges
+if ($Role -eq "worker" -and $publishResult) {
+    Write-Host "Worker outcome: $($publishResult.Outcome)"
+}
 exit 0
-

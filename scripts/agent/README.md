@@ -114,3 +114,10 @@ pull request -> ci + agent-reviewer -> agent-merger
 That means the system does not wait only for cron ticks; completed agent runs
 trigger the next role in the loop.
 
+When a worker run finishes without a repository diff and there are no open pull
+requests, a post-worker workflow job re-dispatches `agent-manager` once so
+the loop does not silently stall on a no-op pass. Worker runs also write an
+`Agent Outcome` block to the GitHub Actions step summary so operators can see
+whether the run opened a PR, reused an existing PR, or made no publishable
+change.
+

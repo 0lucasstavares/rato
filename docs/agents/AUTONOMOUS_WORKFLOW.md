@@ -49,6 +49,11 @@ The practical loop is:
 4. `agent-merger` merges clean, green, reviewed PRs and closes the loop.
 5. A successful merger triggers another manager pass.
 
+If a worker run completes without a repository diff and there are still no open
+pull requests, a post-worker workflow job re-dispatches `agent-manager`
+to avoid a silent stall. This is a bounded handoff, not an unbounded recursive
+loop.
+
 ## Roles
 
 - `manager`: keeps the backlog alive. It labels issues, splits broad work,
@@ -186,6 +191,14 @@ The `Agents` tab reads public GitHub data directly in browser mode:
 - recent `agent-*` workflow status
 - harness usage in a scrollable feed, with failed/cancelled Codex or Claude Code
   jobs shown red as quota/auth risk
+
+Each worker run also writes an `Agent Outcome` block into the GitHub Actions
+step summary so the Actions UI distinguishes:
+
+- PR opened
+- existing PR reused
+- no repository diff
+- staged diff collapsed to empty
 
 If a future daemon RPC named `agents.observability` is available, the tab can use
 that richer source instead.
