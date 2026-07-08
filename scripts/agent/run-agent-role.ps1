@@ -164,6 +164,35 @@ function Write-AgentSummary {
 
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (($Lines -join "`n") + "`n")
 }
+function Get-CurrentBranchName {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    $branch = git rev-parse --abbrev-ref HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return ($branch | Select-Object -First 1)
+}
+
+function Get-WorkerIssueNumber {
+    param(
+        [string]$SourceBranch
+    )
+
+    if (-not $SourceBranch) {
+        return $null
+    }
+
+    $match = [regex]::Match($SourceBranch, '^ai/issue-(\d+)(?:-|$)')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    return $match.Groups[1].Value
+}
 
 
 function Publish-WorkerChanges {
@@ -181,6 +210,8 @@ function Publish-WorkerChanges {
         throw "Worker changed files cannot be published because gh is unavailable."
     }
 
+    $sourceBranch = Get-CurrentBranchName
+    $issueNumber = Get-WorkerIssueNumber -SourceBranch $sourceBranch
     $status = @(git status --porcelain)
     if (-not $status -or $status.Count -eq 0) {
         Write-Host "Worker produced no repository diff; no PR to open."
@@ -200,6 +231,19 @@ function Publish-WorkerChanges {
         }
     }
 
+    if (-not $issueNumber) {
+        $detail = "Worker changed repository files without starting from an ai/issue-<number>-... branch."
+        Write-AgentSummary @(
+            "## Agent Outcome",
+            "",
+            "- Role: worker",
+            "- Outcome: missing issue linkage",
+            "- Harness: $($env:RATO_AGENT_HARNESS)",
+            "- Source branch: $sourceBranch",
+            "- Detail: $detail"
+        )
+        throw $detail
+    }
     Write-Host "Worker produced repository changes:"
     $status | ForEach-Object { Write-Host $_ }
 
@@ -244,23 +288,31 @@ function Publish-WorkerChanges {
         }
     }
 
-    $title = "Autonomous $harness worker run $runId"
-    $commitMessage = "feat(agent): autonomous $harness worker changes ($runId)"
+    $title = "Autonomous $harness worker issue #$issueNumber ($runId)"
+    $commitMessage = "feat(agent): autonomous $harness worker issue #$issueNumber ($runId)"
     Invoke-Checked "git" @("commit", "-m", $commitMessage)
     Invoke-Checked "git" @("push", "--set-upstream", "origin", $branch)
 
     $body = @"
-## Agent Assessment
+## Agent Work Log
 
-Autonomous worker run published repository changes from GitHub Actions run `$runId`.
+Issue: closes #$issueNumber
+Agent role: worker
 
-## Agent Verification
+Changes:
+- Autonomous worker run published repository changes from GitHub Actions run `$runId`.
 
-The worker harness committed the resulting diff and opened this PR automatically. CI and reviewer workflows should now inspect the branch.
+Verification:
+- [ ] CI and reviewer workflows inspect this branch
+
+Follow-up Issues:
+- None recorded by the harness
 
 ## Agent Notes
 
-- Branch: `$branch`
+- Source issue: #$issueNumber
+- Source branch: `$sourceBranch`
+- Publish branch: `$branch`
 - Harness: `$harness`
 - Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
 "@
@@ -275,6 +327,7 @@ The worker harness committed the resulting diff and opened this PR automatically
             "- Role: worker",
             "- Outcome: existing PR reused",
             "- Harness: $($env:RATO_AGENT_HARNESS)",
+            "- Issue: #$issueNumber",
             "- Detail: $detail"
         )
         return @{
@@ -303,6 +356,7 @@ The worker harness committed the resulting diff and opened this PR automatically
         "- Role: worker",
         "- Outcome: pull request opened",
         "- Harness: $($env:RATO_AGENT_HARNESS)",
+        "- Issue: #$issueNumber",
         "- Branch: $branch",
         "- Detail: $detail"
     )
@@ -548,13 +602,19 @@ context and acceptance criteria for a worker to implement it.
 ## Required Behavior
 
 - Prefer taking one complete action over producing advice.
-- If acting on code, create or use a branch and open/update a PR.
+- Structured GitHub blocks are mandatory. Use `Agent Brief`, `Agent Assessment`,
+  `Agent Work Log`, `Agent Review`, `Agent Merge Decision`, or `Agent Blocker`
+  exactly where they apply.
+- If acting on code, start from an `ai/issue-<number>-...` branch, keep the
+  issue link visible, and open/update a PR that links the issue with `closes
+  #<number>`.
 - If acting on issues, create missing issues, update labels, and leave the
   required agent block.
 - If discovering follow-up work, create GitHub issues and reference their issue
   numbers in the current issue, PR, or review.
 - If blocked, leave an `Agent Blocker` comment with the exact missing condition.
-- Keep all progress visible on GitHub.
+- Keep all progress visible on GitHub and tie implementation work back to issue
+  numbers.
 "@
 
 if ($PrintOnly -or -not $env:RATO_AGENT_COMMAND) {
