@@ -2,7 +2,7 @@ name: agent-manager
 
 on:
   workflow_run:
-    workflows: ["agent-scrum-master", "agent-merger"]
+    workflows: ["agent-scrum-master"]
     types: [completed]
   schedule:
     - cron: "17 */2 * * *"
