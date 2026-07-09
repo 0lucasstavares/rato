@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   merger:
-    if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || vars.RATO_AUTONOMY == 'on'
+    if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || (vars.RATO_AUTONOMY == 'on' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
