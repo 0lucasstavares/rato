@@ -2,7 +2,7 @@ name: agent-worker
 
 on:
   workflow_run:
-    workflows: ["agent-manager", "agent-reviewer"]
+    workflows: ["agent-manager"]
     types: [completed]
   schedule:
     - cron: "41 * * * *"
