@@ -57,7 +57,8 @@ jobs:
         run: |
           $role = "${{ inputs.role }}"
           if (-not $role) { $role = "manager" }
-          ./scripts/agent/run-agent-role.ps1 -Role $role      - name: Queue worker
+          ./scripts/agent/run-agent-role.ps1 -Role $role
+      - name: Queue worker
         if: vars.RATO_AUTONOMY == 'on'
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
