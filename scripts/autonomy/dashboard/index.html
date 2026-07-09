@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RATO GitHub Autonomy</title>
+    <style>
+      :root {
+        --bg: #f4efe5;
+        --panel: #fffaf2;
+        --ink: #1e1914;
+        --muted: #6d6257;
+        --accent: #b64c2f;
+        --accent2: #1c6b5f;
+        --warn: #d4931f;
+        --danger: #b42318;
+        --line: #d8cab8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, rgba(182, 76, 47, 0.18), transparent 28%),
+          linear-gradient(180deg, #f8f2e7 0%, var(--bg) 100%);
+      }
+      main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+      h1, h2, h3, .stat-value { font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; letter-spacing: 0.04em; }
+      .hero, .columns, .logs-layout { display: grid; gap: 16px; }
+      .hero { grid-template-columns: 1.3fr 0.7fr; margin-bottom: 16px; }
+      .columns { grid-template-columns: 1.1fr 0.9fr; }
+      .logs-layout { grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr); }
+      .panel {
+        background: color-mix(in srgb, var(--panel) 92%, white);
+        border: 2px solid var(--ink);
+        box-shadow: 5px 5px 0 rgba(30, 25, 20, 0.18);
+        padding: 16px;
+      }
+      .kicker { font-size: 12px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); }
+      .headline { font-size: clamp(34px, 5vw, 62px); line-height: 0.95; margin: 8px 0 10px; }
+      .subhead { margin: 0; color: var(--muted); max-width: 48ch; }
+      .badge {
+        display: inline-block; padding: 4px 10px; border: 1px solid var(--ink);
+        font: 700 12px/1.2 "Courier New", monospace; text-transform: uppercase; background: #fff;
+      }
+      .badge.on { color: var(--accent2); border-color: var(--accent2); }
+      .badge.warn { color: var(--warn); border-color: var(--warn); }
+      .badge.err { color: var(--danger); border-color: var(--danger); }
+      .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+      .stat { padding: 14px; border: 1px solid var(--line); background: rgba(255,255,255,0.72); }
+      .stat-value { font-size: 34px; line-height: 1; }
+      .stat-label { margin-top: 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em; }
+      .workflow-grid, .run-list, .pr-list, .log-list { display: grid; gap: 10px; }
+      .workflow, .run, .pr { border: 1px solid var(--line); padding: 12px; background: rgba(255,255,255,0.72); }
+      .workflow header, .run header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+      .workflow h3, .run h3 { margin: 0; font-size: 22px; }
+      .mono, code, a, pre, button { font-family: "Courier New", monospace; }
+      .meta, .empty { color: var(--muted); font-size: 14px; }
+      .pr a { color: var(--accent); text-decoration: none; }
+      .pr a:hover { text-decoration: underline; }
+      .log-button {
+        width: 100%; text-align: left; border: 1px solid var(--line); background: rgba(255,255,255,0.72);
+        padding: 10px; cursor: pointer; color: var(--ink);
+      }
+      .log-button.active { border-color: var(--accent); background: rgba(182, 76, 47, 0.1); }
+      .log-button:hover { border-color: var(--ink); }
+      .log-name { display: block; font-size: 12px; word-break: break-all; }
+      .log-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+      .viewer-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 10px; }
+      .viewer-title { margin: 0; font-size: 18px; word-break: break-all; }
+      pre {
+        margin: 0; min-height: 320px; max-height: 520px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+        border: 1px solid var(--line); background: rgba(255,255,255,0.72); padding: 12px; font-size: 12px; line-height: 1.45;
+      }
+      @media (max-width: 980px) {
+        .hero, .columns, .logs-layout { grid-template-columns: 1fr; }
+        .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @media (max-width: 640px) {
+        main { padding: 14px; }
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <article class="panel">
+          <div class="kicker">github actions supervisor</div>
+          <h1 class="headline">RATO runs in Actions, not on this box.</h1>
+          <p class="subhead">This dashboard reads GitHub workflow runs, workflow definitions, pull requests, and issue labels directly from the repository.</p>
+        </article>
+        <article class="panel">
+          <div class="kicker">control plane</div>
+          <div id="autonomyStatus" class="badge warn">loading</div>
+          <p id="controlMeta" class="subhead" style="margin-top: 12px;"></p>
+          <p id="repoMeta" class="meta"></p>
+        </article>
+      </section>
+
+      <section class="panel" style="margin-bottom: 16px;">
+        <div class="kicker">queue</div>
+        <div id="queueGrid" class="grid"></div>
+      </section>
+
+      <section class="columns">
+        <article class="panel">
+          <div class="kicker">workflow state</div>
+          <div id="workflowGrid" class="workflow-grid"></div>
+        </article>
+        <article class="panel">
+          <div class="kicker">recent runs</div>
+          <div id="runList" class="run-list"></div>
+        </article>
+      </section>
+
+      <section class="columns" style="margin-top: 16px;">
+        <article class="panel">
+          <div class="kicker">open pull requests</div>
+          <div id="prList" class="pr-list"></div>
+        </article>
+        <article class="panel">
+          <div class="kicker">latest failure</div>
+          <div id="errorBox" class="empty">none</div>
+        </article>
+      </section>
+
+      <section class="logs-layout" style="margin-top: 16px;">
+        <article class="panel">
+          <div class="kicker">run log sessions</div>
+          <div id="logList" class="log-list"></div>
+        </article>
+        <article class="panel">
+          <div class="kicker">run log viewer</div>
+          <div class="viewer-head">
+            <h2 id="logTitle" class="viewer-title">no run selected</h2>
+            <span id="logMeta" class="meta"></span>
+          </div>
+          <pre id="logContent">select a GitHub Actions run to inspect its logs here</pre>
+        </article>
+      </section>
+    </main>
+    <script>
+      const queueLabels = [["ready","Ready"],["working","Working"],["review","Review"],["merge","Merge"],["blocked","Blocked"],["open_prs","Open PRs"]];
+      let selectedRunId = null;
+
+      function fmtAgo(value) {
+        if (!value) return "never";
+        const ts = typeof value === "number" ? value : Date.parse(value);
+        if (!Number.isFinite(ts)) return "never";
+        const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+        if (seconds < 60) return `${seconds}s ago`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
+      }
+
+      function fmtBytes(bytes) {
+        if (!Number.isFinite(bytes)) return "? B";
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      }
+
+      function statusBadgeClass(status, conclusion) {
+        if (conclusion === "success" || conclusion === "skipped") return "on";
+        if (conclusion && ["failure", "cancelled", "timed_out", "action_required"].includes(conclusion)) return "err";
+        if (["completed", "in_progress", "queued", "requested"].includes(status)) return "warn";
+        return "warn";
+      }
+
+      async function fetchJson(url) {
+        const response = await fetch(url, { cache: "no-store" });
+        const value = await response.json();
+        if (!response.ok) throw new Error(value.detail ?? value.error ?? "request failed");
+        return value;
+      }
+
+      function renderQueue(queue) {
+        return queueLabels.map(([key, label]) => `<div class="stat"><div class="stat-value">${queue[key] ?? 0}</div><div class="stat-label">${label}</div></div>`).join("");
+      }
+
+      function renderWorkflows(workflows) {
+        if (!workflows?.length) return `<div class="empty">no workflow data yet</div>`;
+        return workflows.map((workflow) => {
+          const latest = workflow.latest_run;
+          const badge = statusBadgeClass(latest?.status, latest?.conclusion);
+          return `<article class="workflow"><header><h3>${workflow.name}</h3><span class="badge ${badge}">${latest?.conclusion ?? workflow.state ?? 'idle'}</span></header><div class="meta mono">${workflow.path}</div><p class="meta">GitHub state: ${workflow.state}</p><p class="meta">Latest run: ${latest ? `${latest.title} | ${latest.status}/${latest.conclusion ?? 'n/a'} | ${fmtAgo(latest.created_at)}` : 'none'}</p><p class="meta mono">${latest?.head_branch ?? ''}</p></article>`;
+        }).join("");
+      }
+
+      function renderRuns(runs) {
+        if (!runs?.length) return `<div class="empty">no workflow runs yet</div>`;
+        return runs.map((run) => `<button class="log-button ${selectedRunId === run.id ? 'active' : ''}" data-run-id="${run.id}"><span class="log-name">${run.workflow} #${run.id}</span><span class="log-meta">${run.title ?? 'untitled'} | ${run.status}/${run.conclusion ?? 'n/a'} | ${fmtAgo(run.started_at)}</span></button>`).join("");
+      }
+
+      function renderPullRequests(prs) {
+        if (!prs?.length) return `<div class="empty">no open pull requests</div>`;
+        return prs.map((pr) => `<article class="pr"><a href="${pr.url}" target="_blank" rel="noreferrer">#${pr.number} ${pr.title}</a><p class="meta">state: ${pr.merge_state} | draft: ${pr.draft ? "yes" : "no"} | updated: ${fmtAgo(pr.updated_at)}</p><p class="meta mono">${(pr.labels ?? []).join(", ")}</p></article>`).join("");
+      }
+
+      function bindRunButtons() {
+        document.querySelectorAll('[data-run-id]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            selectedRunId = Number(button.dataset.runId);
+            await refresh();
+          });
+        });
+      }
+
+      async function loadViewer() {
+        const title = document.getElementById('logTitle');
+        const meta = document.getElementById('logMeta');
+        const content = document.getElementById('logContent');
+        if (!selectedRunId) {
+          title.textContent = 'no run selected';
+          meta.textContent = '';
+          content.textContent = 'select a GitHub Actions run to inspect its logs here';
+          return;
+        }
+        try {
+          const run = await fetchJson(`/api/runs/${encodeURIComponent(selectedRunId)}/log`);
+          title.textContent = `run ${run.id}`;
+          meta.textContent = fmtAgo(run.updatedAt ?? null);
+          content.textContent = run.content || '(empty log)';
+        } catch (error) {
+          title.textContent = String(selectedRunId);
+          meta.textContent = 'unavailable';
+          content.textContent = String(error);
+        }
+      }
+
+      async function load() {
+        const state = await fetchJson('/api/github-state');
+        const runs = state.recent_runs ?? [];
+        if (!selectedRunId || !runs.some((run) => run.id === selectedRunId)) {
+          selectedRunId = runs[0]?.id ?? null;
+        }
+
+        const status = state.autonomy?.enabled ?? 'unknown';
+        const statusEl = document.getElementById('autonomyStatus');
+        statusEl.className = `badge ${status === 'on' ? 'on' : status === 'off' ? 'warn' : 'warn'}`;
+        statusEl.textContent = `RATO_AUTONOMY ${status}`;
+        document.getElementById('controlMeta').textContent = `GitHub Actions state from ${state.repo?.nameWithOwner ?? 'unknown repo'}`;
+        document.getElementById('repoMeta').textContent = `Refreshed ${fmtAgo(state.autonomy?.updatedAt)} | ${state.workflows?.length ?? 0} workflows`;
+        document.getElementById('queueGrid').innerHTML = renderQueue(state.queue ?? {});
+        document.getElementById('workflowGrid').innerHTML = renderWorkflows(state.workflows ?? []);
+        document.getElementById('runList').innerHTML = renderRuns(runs);
+        document.getElementById('prList').innerHTML = renderPullRequests(state.pull_requests ?? []);
+        bindRunButtons();
+
+        const errorBox = document.getElementById('errorBox');
+        if (state.last_error) {
+          errorBox.innerHTML = `<div class="badge err">${state.last_error.workflow ?? 'workflow'}</div><p class="meta">${state.last_error.title ?? 'latest failure'}</p><p class="meta">${state.last_error.conclusion ?? 'failed'}</p><p class="meta">${fmtAgo(state.last_error.updated_at)}</p><p class="meta mono"><a href="${state.last_error.url}" target="_blank" rel="noreferrer">open run</a></p>`;
+        } else {
+          errorBox.textContent = 'none';
+        }
+
+        await loadViewer();
+      }
+
+      async function refresh() {
+        try {
+          await load();
+        } catch (error) {
+          document.getElementById('errorBox').textContent = String(error);
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 15000);
+    </script>
+  </body>
+</html>

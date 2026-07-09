@@ -15,4 +15,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
         run: gh variable set RATO_AUTONOMY --repo "$GITHUB_REPOSITORY" --body on
-
