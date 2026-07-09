@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("cartographer", "manager", "worker", "reviewer", "merger", "orchestrator")]
+    [ValidateSet("cartographer", "manager", "worker", "reviewer", "merger", "orchestrator", "scrum-master")]
     [string]$Role,
 
     [switch]$PrintOnly
