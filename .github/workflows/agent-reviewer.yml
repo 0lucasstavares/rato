@@ -12,19 +12,15 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  group: agent-reviewer-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   reviewer:
     if: github.event_name != 'schedule' || vars.RATO_AUTONOMY == 'on'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        harness: [codex, claude-code]
     timeout-minutes: 30
-    name: reviewer (${{ matrix.harness }})
-    concurrency:
-      group: agent-reviewer-${{ matrix.harness }}-${{ github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,19 +30,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
           RATO_AGENT_COMMAND: pwsh ./scripts/agent/run-provider-agent.ps1
-          RATO_AGENT_HARNESS: ${{ matrix.harness }}
-          RATO_AGENT_PROVIDER: ${{ matrix.harness }}
-          RATO_AGENT_ID: ${{ matrix.harness }}-reviewer
-          RATO_CODEX_API_KEY: ${{ secrets.RATO_CODEX_API_KEY || secrets.OPENAI_API_KEY || secrets.CHATGPT_API_KEY }}
-          RATO_CLAUDE_AUTH_TOKEN: ${{ secrets.RATO_CLAUDE_AUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
+          RATO_AGENT_PROVIDER: ${{ secrets.RATO_AGENT_PROVIDER || 'anthropic' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHATGPT_API_KEY: ${{ secrets.CHATGPT_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          RATO_CLAUDE_AUTH_TOKEN: ${{ secrets.RATO_CLAUDE_AUTH_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          RATO_AGENT_MODEL: ${{ secrets.RATO_AGENT_MODEL || 'gpt-5.1-codex-max' }}
+          RATO_AGENT_MODEL: ${{ secrets.RATO_AGENT_MODEL || 'gpt-5.4-mini' }}
           RATO_AGENT_FAST_MODEL: ${{ secrets.RATO_AGENT_FAST_MODEL || 'gpt-5-mini' }}
           RATO_AGENT_REVIEW_MODEL: ${{ secrets.RATO_AGENT_REVIEW_MODEL || 'gpt-5.1' }}
           RATO_EMBEDDING_MODEL: ${{ secrets.RATO_EMBEDDING_MODEL || 'text-embedding-3-small' }}
           RATO_AUDIO_MODEL: ${{ secrets.RATO_AUDIO_MODEL || 'whisper-1' }}
         run: ./scripts/agent/run-agent-role.ps1 -Role reviewer
-

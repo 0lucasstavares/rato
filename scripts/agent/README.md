@@ -4,8 +4,7 @@ These scripts are thin wrappers around GitHub and an external agent command.
 They do not contain the intelligence. They assemble project context, role
 prompts, and GitHub state so an agent can act consistently.
 
-The full live workflow is documented in
-`docs/agents/AUTONOMOUS_WORKFLOW.md`.
+The live workflow is documented in `docs/agents/AUTONOMOUS_WORKFLOW.md`.
 
 ## Bootstrap GitHub
 
@@ -13,61 +12,17 @@ The full live workflow is documented in
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/bootstrap-github.ps1
 ```
 
-This creates the label vocabulary used by the autonomous loops. Add
+This creates the label vocabulary used by the autonomous loop. Add
 `-SeedMilestoneIssues` to create initial issues from the milestone plan files.
 
-Local bootstrap uses the local GitHub CLI auth context. If the repository secret
-is already configured but local `gh auth status` still fails, refresh or export a
-token in the same shell before running the script:
+Local bootstrap uses the local GitHub CLI auth context. If `gh auth status`
+fails, refresh auth or export a token in the same shell before running the
+bootstrap:
 
 ```powershell
 gh auth refresh -h github.com -s repo -s workflow
 # or
 $env:GH_TOKEN = "<fine-grained-token-for-this-repo>"
-```
-
-The GitHub Actions workflows expect these repository secrets:
-
-- `RATO_AGENT_COMMAND`: public workflow config. The repo defaults this to
-  `pwsh ./scripts/agent/run-provider-agent.ps1`.
-- `RATO_GH_TOKEN`: optional fine-grained token. If omitted, workflows fall back
-  to `github.token`.
-- `RATO_AGENT_PROVIDER`: optional provider preference: `openai`, `anthropic`,
-  `openrouter`, or `auto`.
-- `RATO_AGENT_HARNESS`: optional harness preference: `codex`, `claude-code`,
-  or `auto`.
-- `RATO_CODEX_API_KEY`: preferred credential for the Codex harness.
-- `RATO_CLAUDE_AUTH_TOKEN`: preferred credential for the Claude Code harness.
-- `OPENAI_API_KEY`: OpenAI API key for Codex/OpenAI-compatible wrappers.
-- `CHATGPT_API_KEY`: optional alias for wrappers that expect "ChatGPT" naming.
-- `ANTHROPIC_API_KEY`: Anthropic API key for Claude/Anthropic wrappers.
-- `ANTHROPIC_AUTH_TOKEN`: optional alias accepted by some Anthropic CLI setups.
-- `OPENROUTER_API_KEY`: optional OpenRouter key.
-- `RATO_AGENT_MODEL`: primary coding model. Default: `gpt-5.1-codex-max`.
-- `RATO_AGENT_FAST_MODEL`: cheaper triage/planning model. Default:
-  `gpt-5-mini`.
-- `RATO_AGENT_REVIEW_MODEL`: review/checker model. Default: `gpt-5.1`.
-- `RATO_EMBEDDING_MODEL`: embedding model. Default:
-  `text-embedding-3-small`.
-- `RATO_AUDIO_MODEL`: audio/transcription model. Default: `whisper-1`.
-
-Known available OpenAI models for this setup:
-
-```text
-gpt-5.2
-gpt-4o
-gpt-4
-gpt-4o-mini
-o4-mini
-gpt-5.4-pro
-gpt-5.5-pro
-whisper-1
-gpt-audio-2025-08-28
-gpt-realtime-whisper
-gpt-5.1-codex-max
-text-embedding-3-small
-gpt-5.1
-gpt-5-mini
 ```
 
 ## Run One Role
@@ -76,48 +31,60 @@ gpt-5-mini
 powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role manager
 ```
 
-By default, the script prints the full prompt unless `RATO_AGENT_COMMAND` is set.
-The GitHub workflows set it to the repo-owned provider wrapper:
+By default, the script prints the full prompt unless `RATO_AGENT_COMMAND` is
+set. The GitHub Actions workflows default it to the repo-owned provider wrapper:
 `pwsh ./scripts/agent/run-provider-agent.ps1`.
 
-Example shape:
+Supported roles:
 
-```powershell
-$env:RATO_AGENT_COMMAND = "rato-agent-wrapper"
-powershell -ExecutionPolicy Bypass -File ./scripts/agent/run-agent-role.ps1 -Role worker
-```
+- `scrum-master`
+- `manager`
+- `worker`
+- `reviewer`
+- `merger`
+- `cartographer`
+- `orchestrator`
 
-The GitHub Actions role workflows run both harnesses through a matrix:
-`codex` for Codex CLI and `claude-code` for Claude Code CLI. The provider
-wrapper still supports local `auto` mode, which chooses OpenAI/Codex first when
-`OPENAI_API_KEY` or `CHATGPT_API_KEY` is available, otherwise Anthropic when
-`ANTHROPIC_API_KEY` is available. Set `RATO_AGENT_PROVIDER=anthropic` to force
-Claude Code in a local or custom run.
+The provider wrapper supports `auto` mode, which chooses OpenAI/Codex first
+when OpenAI credentials exist, otherwise Anthropic when Anthropic credentials
+exist. Set `RATO_AGENT_PROVIDER=anthropic` to force Claude Code.
 
-## Turn Autonomy On/Off
+## GitHub Actions autonomy
 
-Two manual workflows control scheduled autonomy:
-
-- `autonomy-on`: sets repository variable `RATO_AUTONOMY=on`.
-- `autonomy-off`: sets repository variable `RATO_AUTONOMY=off`.
-
-Scheduled manager, worker, reviewer, and merger loops only run when
-`RATO_AUTONOMY` is `on`. Manual dispatch still works while autonomy is off.
-
-When autonomy is on, workflows also hand off through `workflow_run` events:
+Primary workflows:
 
 ```text
-agent-merger -> agent-manager -> agent-worker -> pull request
-pull request -> ci + agent-reviewer -> agent-merger
+.github/workflows/agent-scrum-master.yml
+.github/workflows/agent-manager.yml
+.github/workflows/agent-worker.yml
+.github/workflows/agent-reviewer.yml
+.github/workflows/agent-merger.yml
 ```
 
-That means the system does not wait only for cron ticks; completed agent runs
-trigger the next role in the loop.
+Control workflows:
 
-When a worker run finishes without a repository diff and there are no open pull
-requests, a post-worker workflow job re-dispatches `agent-manager` once so
-the loop does not silently stall on a no-op pass. Worker runs also write an
-`Agent Outcome` block to the GitHub Actions step summary so operators can see
-whether the run opened a PR, reused an existing PR, or made no publishable
-change.
+```text
+.github/workflows/autonomy-on.yml
+.github/workflows/autonomy-off.yml
+```
 
+## Local fallback
+
+The local supervisor still exists for fallback testing:
+
+```powershell
+pwsh ./scripts/autonomy/run-local-autonomy.ps1
+pwsh ./scripts/autonomy/run-local-autonomy.ps1 -Once
+```
+
+The standalone dashboard still exists for local inspection:
+
+```powershell
+node ./scripts/autonomy/dashboard-server.mjs
+```
+
+Open:
+
+```text
+http://127.0.0.1:19774
+```

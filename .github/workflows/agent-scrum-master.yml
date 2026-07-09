@@ -1,25 +1,24 @@
-name: agent-merger
+name: agent-scrum-master
 
 on:
   workflow_run:
-    workflows: ["ci", "agent-reviewer"]
+    workflows: ["agent-merger"]
     types: [completed]
   schedule:
-    - cron: "29 */4 * * *"
+    - cron: "7 */2 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   issues: write
-  pull-requests: write
-  actions: read
+  pull-requests: read
 
 concurrency:
-  group: agent-merger
+  group: agent-scrum-master
   cancel-in-progress: false
 
 jobs:
-  merger:
+  scrum-master:
     if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || vars.RATO_AUTONOMY == 'on'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -27,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Run merger
+      - name: Run scrum-master
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RATO_GH_TOKEN || github.token }}
@@ -44,4 +43,4 @@ jobs:
           RATO_AGENT_REVIEW_MODEL: ${{ secrets.RATO_AGENT_REVIEW_MODEL || 'gpt-5.1' }}
           RATO_EMBEDDING_MODEL: ${{ secrets.RATO_EMBEDDING_MODEL || 'text-embedding-3-small' }}
           RATO_AUDIO_MODEL: ${{ secrets.RATO_AUDIO_MODEL || 'whisper-1' }}
-        run: ./scripts/agent/run-agent-role.ps1 -Role merger
+        run: ./scripts/agent/run-agent-role.ps1 -Role scrum-master
