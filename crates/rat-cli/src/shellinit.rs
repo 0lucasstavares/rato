@@ -66,3 +66,32 @@ add-zsh-hook precmd _rat_precmd
         ),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippets_contain_shell_specific_hooks() {
+        let bash = snippet(ShellKind::Bash).unwrap();
+        let zsh = snippet(ShellKind::Zsh).unwrap();
+
+        assert!(bash.contains("# RATO shell hooks (bash)"));
+        assert!(bash.contains("trap '_rat_preexec' DEBUG"));
+        assert!(bash.contains("PROMPT_COMMAND=\"_rat_precmd"));
+        assert!(zsh.contains("# RATO shell hooks (zsh)"));
+        assert!(zsh.contains("autoload -Uz add-zsh-hook"));
+        assert!(zsh.contains("add-zsh-hook preexec _rat_preexec"));
+        assert!(zsh.contains("add-zsh-hook precmd _rat_precmd"));
+        assert_ne!(bash, zsh);
+    }
+
+    #[test]
+    fn shell_converts_to_matching_kind() {
+        assert!(matches!(
+            ShellKind::from(crate::Shell::Bash),
+            ShellKind::Bash
+        ));
+        assert!(matches!(ShellKind::from(crate::Shell::Zsh), ShellKind::Zsh));
+    }
+}

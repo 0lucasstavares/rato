@@ -70,3 +70,46 @@ pub fn make_backend(cfg: &BackendConfig, key: String) -> Box<dyn ChatBackend> {
         Provider::OpenRouter => Box::new(OpenRouterBackend::new(cfg, key)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn factory_returns_requested_provider() {
+        for provider in [Provider::OpenAi, Provider::Anthropic, Provider::OpenRouter] {
+            let cfg = BackendConfig {
+                provider: provider.clone(),
+                base_url: None,
+                critic_model: None,
+                cheap_model: None,
+            };
+
+            assert_eq!(make_backend(&cfg, "test-key".into()).provider(), provider);
+        }
+    }
+
+    #[test]
+    fn provider_serde_uses_variant_names() {
+        for (provider, json) in [
+            (Provider::OpenAi, "\"OpenAi\""),
+            (Provider::Anthropic, "\"Anthropic\""),
+            (Provider::OpenRouter, "\"OpenRouter\""),
+        ] {
+            assert_eq!(serde_json::to_string(&provider).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Provider>(json).unwrap(), provider);
+        }
+    }
+
+    #[test]
+    fn role_serde_uses_variant_names() {
+        for (role, json) in [
+            (Role::System, "\"System\""),
+            (Role::User, "\"User\""),
+            (Role::Assistant, "\"Assistant\""),
+        ] {
+            assert_eq!(serde_json::to_string(&role).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Role>(json).unwrap(), role);
+        }
+    }
+}
